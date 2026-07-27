@@ -1,0 +1,54 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows Portable App
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller UnityPy
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller cargo_hunters_editor.spec
+
+      - name: Package release folder to ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/CargoHuntersEditor -DestinationPath dist/CargoHuntersEditor.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CargoHuntersEditor-Windows
+          path: dist/CargoHuntersEditor.zip
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CargoHuntersEditor.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

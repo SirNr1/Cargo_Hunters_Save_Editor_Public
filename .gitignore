@@ -1,0 +1,29 @@
+# Python cache/build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# PyInstaller output
+build/
+dist/
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Local save data and backups
+**/offline.save
+**/offline.save.bak
+**/offline_*.save
+CH_Editor/manual_*
+CH_Editor/backups/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
