@@ -4,7 +4,7 @@
 
 Desktop save editor for the Steam game **Cargo Hunters** (`offline.save`, Steam App ID `4197990`) built with Python and Tkinter.
 
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-lightgrey.svg)](LICENSE)
 
 ---
 
@@ -121,11 +121,21 @@ the section above tells you how.
 
 ## 📄 License & Terms
 
-This project is licensed under the **[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)](LICENSE)** license.
+This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
-* **Non-Commercial**: You may **not** sell, monetize, or include this software or its source code in any commercial product.
-* **Attribution**: You must give appropriate credit if you share or adapt this project.
-* **ShareAlike**: Any modified versions must be distributed under the same license.
+* **Noncommercial only**: any noncommercial purpose is permitted — personal use, study,
+  private entertainment, hobby projects, and use by charities, schools and public
+  institutions. Selling it, charging for access to it, or putting it behind a subscription
+  is **not** permitted.
+* **Modify and share freely**: you may change it and distribute your changes, as long as
+  the use stays noncommercial.
+* **Keep the notices**: pass on the license text and the `Required Notice:` line with any
+  copy you distribute.
+
+This is a *source-available* license rather than an OSI-approved open-source one — the
+noncommercial restriction is the point. It replaced CC BY-NC-SA 4.0, which Creative Commons
+themselves advise against for software: their licenses carry no source-distribution terms
+and no patent grant.
 
 ### Disclaimer
 *This software is an unofficial, community-made fan tool and is NOT affiliated with, endorsed by, or associated with the developers or publishers of Cargo Hunters.*
