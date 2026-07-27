@@ -15,6 +15,20 @@ If you find this tool helpful and want to support its continued development:
 
 ---
 
+## 📸 Screenshots
+
+![Inventory](docs/screenshots/01-inventory.png)
+
+| Game Items catalog | Hackerman's Lab |
+| --- | --- |
+| ![Game Items](docs/screenshots/02-game-items.png) | ![Hackerman's Lab](docs/screenshots/03-hackermans-lab.png) |
+
+| Mailbox | Offer at Trader |
+| --- | --- |
+| ![Mailbox](docs/screenshots/04-mailbox.png) | ![Offer at Trader](docs/screenshots/05-offer-at-trader.png) |
+
+---
+
 ## ✨ Features
 
 * **🎒 Inventory & Equipment Management**:
@@ -80,6 +94,26 @@ pyinstaller cargo_hunters_editor.spec
 
 The compiled portable app will be located at:
 `dist/CargoHuntersEditor/`
+
+---
+
+## ⚠️ Windows will warn you the first time
+
+The build is an unsigned PyInstaller executable, so two warnings are normal and neither means
+something is wrong:
+
+* **SmartScreen** — *"Windows protected your PC"*. Click **More info → Run anyway**. The
+  warning appears because the file has no code-signing certificate, not because of anything
+  it does.
+* **Antivirus** — PyInstaller executables are a well-known source of false positives, since
+  legitimate and malicious programs alike get packed with it. Defender occasionally flags one
+  build and clears the next.
+
+The app makes no network connections. The only files it writes are your save and the
+timestamped copies in the `backups/` folder next to the executable.
+
+If you would rather not trust a binary at all, run it from source — it is the same code, and
+the section above tells you how.
 
 ---
 
