@@ -218,6 +218,97 @@ def _extract_grid_size(entry: dict[str, Any]) -> tuple[int | None, int | None]:
     return width, height
 
 
+def _extract_max_size(entry: dict[str, Any]) -> tuple[int | None, int | None, bool]:
+    """(max_width, max_height, is_resizable) from the base component.
+
+    A weapon carries a `Size` **and** a `MaxSize`, plus `IsResizable`: how far it can grow as
+    attachments are added. Recorded for reference only - the editor does **not** place items
+    by it. Measured against a real save, reserving `MaxSize` invents 80 overlapping cells
+    inside five rifle cases, because a weapon there is stored at the 4x1 it really takes while
+    its maximum is 6x3. See `tests/test_placement_real.py`.
+
+    The base component is the one carrying `LocalizedName`; other components have a `Size`
+    of their own that means something else entirely.
+    """
+    for component in entry.get("_components") or []:
+        if not isinstance(component, dict):
+            continue
+        data = component.get("_data")
+        if not isinstance(data, dict) or "LocalizedName" not in data:
+            continue
+        max_size = data.get("MaxSize")
+        width = height = None
+        if isinstance(max_size, dict):
+            raw_w, raw_h = max_size.get("Width"), max_size.get("Height")
+            width = raw_w if isinstance(raw_w, int) else None
+            height = raw_h if isinstance(raw_h, int) else None
+        return width, height, bool(data.get("IsResizable"))
+    return None, None, False
+
+
+def _extract_container(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """The storage an item provides, or None if it holds nothing.
+
+    Identified by the shape of each component's `_data` rather than by its `$t` id - those
+    are numeric hashes and a game update can renumber them. Three kinds exist, matching the
+    game's own component classes:
+
+      simple - one free grid of Width x Height; a warehouse tab is 8x30
+      split  - a list of sub-rectangles, each a Size at an optional Position. A cell outside
+               every rectangle does not exist, which is the dead area in a rig or vest.
+      slots  - named compartments taking one item each (weapon attachment points)
+
+    The base component also carries a `Size` - the item's own footprint - so it is told apart
+    by its `LocalizedName`. Deliberately not by `AllowExpand`: that field is omitted when it
+    is False, the same way a zero `Position` or an empty equipment slot vanishes.
+    """
+    for component in entry.get("_components") or []:
+        if not isinstance(component, dict):
+            continue
+        data = component.get("_data")
+
+        # SplittedContainerComponent keeps a list of regions instead of a single size.
+        if isinstance(data, list):
+            regions = []
+            for region in data:
+                if not isinstance(region, dict) or not isinstance(region.get("Size"), dict):
+                    continue
+                w = region["Size"].get("Width")
+                h = region["Size"].get("Height")
+                if not isinstance(w, int) or not isinstance(h, int):
+                    continue
+                position = region.get("Position")
+                position = position if isinstance(position, dict) else {}
+                regions.append({
+                    "i": int(position.get("I") or 0),
+                    "j": int(position.get("J") or 0),
+                    "width": w,
+                    "height": h,
+                })
+            if regions:
+                return {"kind": "split", "regions": regions}
+            continue
+
+        if not isinstance(data, dict) or "LocalizedName" in data:
+            continue
+
+        slots = data.get("ContainerSlots")
+        if isinstance(slots, list) and slots:
+            return {"kind": "slots", "slot_count": len(slots)}
+
+        size = data.get("Size")
+        if isinstance(size, dict):
+            w, h = size.get("Width"), size.get("Height")
+            if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
+                return {
+                    "kind": "simple",
+                    "width": w,
+                    "height": h,
+                    "allow_expand": bool(data.get("AllowExpand")),
+                }
+    return None
+
+
 def _extract_max_durability(entry: dict[str, Any]) -> float | None:
     """Ceiling for `DurabilityComponent_durability`, e.g. 5 charges for a repair kit.
 
@@ -499,6 +590,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         entry_ref = _extract_items_table_entry_ref(entry)
         category_id, sub_category_id = _extract_category_ids(entry)
         width, height = _extract_grid_size(entry)
+        max_width, max_height, is_resizable = _extract_max_size(entry)
         template_meta[template_id] = {
             "alias": alias,
             "category_id": category_id,
@@ -507,6 +599,10 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
             "height": height,
             "max_durability": _extract_max_durability(entry),
             "stack_capacity": _extract_stack_capacity(entry),
+            "container": _extract_container(entry),
+            "max_width": max_width,
+            "max_height": max_height,
+            "is_resizable": is_resizable,
         }
 
         resolved_name = None
@@ -576,6 +672,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                     break
             
     skills_mapping = {}
+    skills_meta = {}
     if skills_text:
         try:
             skills_json = json.loads(skills_text)
@@ -586,12 +683,25 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                 localized_name = None
                 if table_ref and skills_table:
                     localized_name = skills_table.get(table_ref)
-                
+
                 name = localized_name or alias
                 if name:
                     if alias and "Disabled" in alias:
                         name = f"{name} (Disabled)"
                     skills_mapping[str(skill_id)] = name
+
+                # `MaxVersion` is the skill's maximum level despite the name - measured
+                # in-game against a real save: Combat and ItemFind stop at 6 and carry 6,
+                # Lockpick stops at 5 and carries 5. It is the only field that fits all
+                # three. On a disabled skill the value is meaningless.
+                max_level = skill.get("MaxVersion")
+                skills_meta[str(skill_id)] = {
+                    "alias": alias,
+                    "name": name,
+                    "max_level": max_level if isinstance(max_level, int) else None,
+                    "is_disabled": bool(skill.get("IsDisabled")),
+                    "order": skill.get("Order"),
+                }
         except Exception:
             pass
 
@@ -610,6 +720,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                     break
             
     trader_mapping = {}
+    shops_meta = {}
     if shop_templates_text:
         try:
             shop_templates_json = json.loads(shop_templates_text)
@@ -617,7 +728,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                 shop_id = shop.get("Id")
                 npc_id = shop.get("NpcBioId")
                 alias = shop.get("Alias")
-                
+
                 name = None
                 if npc_id:
                     name = npc_candidates.get(npc_id.strip().lower())
@@ -634,8 +745,66 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                         else:
                             name = "Raid Shop (Yellow Van)"
                     trader_mapping[shop_id.strip().lower()] = name
+
+                # `ShopBalance` is what the game itself gives this trader: 500000 for the two
+                # that sell and for QuickSell, 100 for the price-reference shop, and nothing
+                # at all for the two raid shops. A currency -> amount map, in practice always
+                # credits. Whether the game caps a balance above it is unknown - no Max field
+                # exists anywhere - but writing the game's own number can never be too much,
+                # and it follows a game update on its own.
+                balance = shop.get("ShopBalance")
+                if isinstance(shop_id, str) and shop_id.strip():
+                    shops_meta[shop_id.strip().lower()] = {
+                        "alias": alias,
+                        "name": name,
+                        "balance": balance if isinstance(balance, dict) else {},
+                        "order": shop.get("OrderNumber"),
+                    }
         except Exception:
             pass
+
+    # Account progression: the level ceiling, and the coefficients the XP goal is built from.
+    max_account_level = None
+    level_progress = {}
+    for obj in repo_env.objects:
+        if obj.type.name != "TextAsset":
+            continue
+        try:
+            tree = obj.read_typetree()
+        except Exception:
+            continue
+        if not isinstance(tree, dict) or tree.get("m_Name") != "level_progress_settings":
+            continue
+        try:
+            progress = json.loads(tree.get("m_Script") or "")
+        except Exception:
+            break
+        if not isinstance(progress, dict):
+            break
+        value = progress.get("MaxLevel")
+        if isinstance(value, int) and value > 0:
+            max_account_level = value
+
+        # `NextLevelExperienceGoal` for a level is `level * Multiply + Sum`, with both
+        # coefficients taken from the band the level falls into. Checked against a real save:
+        # a level 25 character carries 62000, and 24 * 3000 - 10000 is exactly that.
+        def _bands(key):
+            out = []
+            for band in progress.get(key) or []:
+                if not isinstance(band, dict):
+                    continue
+                lo, hi = band.get("MinLevel"), band.get("MaxLevel")
+                coefficient = band.get("Coefficient")
+                if isinstance(lo, int) and isinstance(hi, int) and isinstance(coefficient, (int, float)):
+                    out.append({"min_level": lo, "max_level": hi, "coefficient": coefficient})
+            return out
+
+        level_progress = {
+            "max_level": max_account_level,
+            "xp_multiply": _bands("NextLevelMultiplyCoefficients"),
+            "xp_sum": _bands("NextLevelSumCoefficients"),
+        }
+        break
 
     return {
         "enabled": True,
@@ -658,7 +827,11 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         "category_label_by_id": category_label_by_id,
         "subcategory_label_by_id": subcategory_label_by_id,
         "skills_mapping": skills_mapping,
+        "skills_meta": skills_meta,
         "trader_mapping": trader_mapping,
+        "shops_meta": shops_meta,
+        "max_account_level": max_account_level,
+        "level_progress": level_progress,
     }
 
 
@@ -787,6 +960,18 @@ def build_final_mapping(
             "height": repo_meta.get(tid, {}).get("height"),
             "max_durability": repo_meta.get(tid, {}).get("max_durability"),
             "stack_capacity": repo_meta.get(tid, {}).get("stack_capacity"),
+            # The storage this item provides, for placing something inside it. `width`/
+            # `height` above are the item's own footprint and a different thing entirely.
+            "container": repo_meta.get(tid, {}).get("container"),
+            # The developer's own name for the template. 55 localized names are shared by
+            # several templates - eight items all read "Bodypart Blueprint" - and the alias
+            # tells 54 of those 55 groups apart (Bp_LeftArm_02_Model_03, Bp_Head_01_Model_03).
+            "alias": repo_meta.get(tid, {}).get("alias"),
+            # A resizable item keeps the cells up to MaxSize unusable even while it is drawn
+            # at `width`/`height`, so MaxSize is what has to be reserved for it.
+            "max_width": repo_meta.get(tid, {}).get("max_width"),
+            "max_height": repo_meta.get(tid, {}).get("max_height"),
+            "is_resizable": repo_meta.get(tid, {}).get("is_resizable"),
             "confidence": (
                 "high"
                 if name_guess and tid in repo_candidates
@@ -823,6 +1008,11 @@ def build_item_catalog(mapping: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "height": row.get("height"),
                 "max_durability": row.get("max_durability"),
                 "stack_capacity": row.get("stack_capacity"),
+                "container": row.get("container"),
+                "alias": row.get("alias"),
+                "max_width": row.get("max_width"),
+                "max_height": row.get("max_height"),
+                "is_resizable": row.get("is_resizable"),
                 "confidence": row.get("confidence"),
             }
         )
@@ -879,7 +1069,10 @@ def run_extraction(
 
     report = {
         "game_path": str(game_path),
-        "save_path": str(save_path),
+        # File name only. The report is committed, and the usual place to read a save from is
+        # Steam's userdata/<id64>/4197990/remote - a full path would publish that id. Nothing
+        # reads this field; it exists to say which save the run was measured against.
+        "save_path": save_path.name,
         "unitypy_enabled": bool(unitypy_data.get("enabled")),
         "unitypy_reason": unitypy_data.get("reason"),
         "repository_mapping_enabled": bool(repository_names.get("enabled")),
@@ -912,7 +1105,11 @@ def run_extraction(
         "item_catalog": item_catalog,
         "npc_name_mapping": repository_names.get("npc_candidates", {}),
         "skills_mapping": repository_names.get("skills_mapping", {}),
+        "skills_meta": repository_names.get("skills_meta", {}),
         "trader_mapping": repository_names.get("trader_mapping", {}),
+        "shops_meta": repository_names.get("shops_meta", {}),
+        "max_account_level": repository_names.get("max_account_level"),
+        "level_progress": repository_names.get("level_progress", {}),
         "bundle_slug_hints": bundle_hints["bundle_slug_hints"],
     }
 
