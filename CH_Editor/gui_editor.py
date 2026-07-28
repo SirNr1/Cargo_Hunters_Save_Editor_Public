@@ -8,7 +8,12 @@ import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from core_utils import SaveDataManager
+from core_utils import (
+    BACKUP_KEEP_DEFAULT,
+    SaveDataManager,
+    container_cells,
+    find_placement,
+)
 from main_editor import build_entries, describe_entry, repair_item_logic
 
 STEAM_APP_ID = "4197990"
@@ -96,6 +101,36 @@ def save_config_lang(lang: str) -> None:
         pass
 
 
+def load_config_backup_keep() -> int:
+    path = get_config_path()
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                keep = json.load(f).get("backup_keep")
+            if isinstance(keep, int) and keep >= 0:
+                return keep
+        except Exception:
+            pass
+    return BACKUP_KEEP_DEFAULT
+
+
+def save_config_backup_keep(keep: int) -> None:
+    path = get_config_path()
+    try:
+        data = {}
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data["backup_keep"] = int(keep)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+
 TRANSLATIONS = {
     "en": {
         "title": "★ Cargo Hunters Save Editor ★",
@@ -113,6 +148,7 @@ TRANSLATIONS = {
         "btn_search": "Search",
         "btn_delete_mail": "Delete selected letter",
         "lbl_category": "Category:",
+        "lbl_subcategory": "SubCategory:",
         "ctx_add_to_inv": "Add to Inventory",
         "lbl_warn_title": "☠ WARNING: HACKERMAN'S DANGER ZONE ☠",
         "lbl_warn_desc": "Manipulating character stats, skills, or traders can completely corrupt (brick) your save file!\nUse these features at your own risk.",
@@ -156,6 +192,7 @@ TRANSLATIONS = {
         "status_refreshed": "Mapping refreshed from: {path}",
         "ctx_repair": "Repair Item",
         "ctx_duplicate": "Duplicate Item",
+        "ctx_delete": "Delete Item",
         "tab_skills": "Skills",
         "tab_trader_balances": "Trader Balances",
         "lbl_balance": "Balance:",
@@ -178,7 +215,7 @@ TRANSLATIONS = {
         "scope_tab": "Tab {idx}",
         "scope_shelter": "Shelter",
         "msg_cheats_repair": "Success! Repaired all {count} items to 100%!",
-        "msg_cheats_skills": "Success! All skill levels set to 10!",
+        "msg_cheats_skills": "Success! Raised {count} skills, each to its own maximum level!",
         "msg_cheats_traders": "Success! Credited 1,000,000 to {count} traders!",
         "status_cheat_repaired": "Repaired all {count} repairable items in save",
         "status_cheat_maxed_skills": "Maxed out all skill levels",
@@ -196,6 +233,9 @@ TRANSLATIONS = {
         "msg_unsaved_changes_prompt": "You have unsaved changes.\n\nYes: Apply changes and exit\nNo: Discard changes and exit\nCancel: keep editor open",
         "status_changes_applied": "Changes applied to save file",
         "status_changes_applied_backup": "Changes applied. Backup: backups\\{name}",
+        "status_changes_applied_backup_pruned": "Changes applied. Backup: backups\\{name} ({count} older backups removed)",
+        "backups_keep_label": "Keep backups:",
+        "backups_keep_hint": "How many timestamped backups to keep in the backups folder. 0 keeps all of them.",
         "status_changes_discarded": "Unsaved changes discarded",
         "msg_err_save_not_found": "--save-path does not exist:\n{candidate}",
         "msg_title_save_not_found": "Save file not found",
@@ -240,7 +280,29 @@ TRANSLATIONS = {
         "msg_row_no_item_data": "Selected tree row has no item data.",
         "msg_item_not_found": "Item not found: {item_id}",
         "msg_duplicate_failed": "Failed to duplicate selection.{failed_hint}",
+        "msg_delete_title": "Delete item",
+        "msg_delete_confirm": "Delete this item?",
+        "msg_delete_confirm_many": "Delete these {count} items? This one row stands for all of them.",
+        "msg_delete_attachments": "{count} attached item(s) will be deleted with it.",
+        "msg_delete_equipped": "It sits in an equipment slot. The slot will be left empty.",
+        "msg_delete_revert_hint": "Discard Changes still undoes this until you apply.",
+        "msg_delete_structural": "This row is a storage container of the save itself, not an item, and cannot be deleted.",
+        "status_items_deleted": "Deleted {count} item(s) (not saved yet)",
         "msg_search_empty": "Please enter a search query.",
+        "msg_skill_level_range": "Invalid level. This skill goes from 0 to {max_level}.",
+        "msg_trader_level_range": "Invalid level. A trader goes from {min_level} to {max_level}.",
+        "btn_level_max": "MAX",
+        "lbl_skill_points": "Unspent skill points:",
+        "tab_counters": "Counters",
+        "col_counter_group": "Group",
+        "col_counter_stat": "Statistic",
+        "col_counter_value": "Value",
+        "col_counter_updated": "Last set (UTC)",
+        "counters_sessions": "Sessions",
+        "counters_last_run": "Last run",
+        "counters_lifetime": "Lifetime",
+        "counters_hint": "Read-only: the account's own tally, kept by the game. Nothing here is written back.",
+        "counters_empty": "This save carries no counters.",
         "msg_select_search_result": "Select a search result first.",
         "msg_select_letter": "Please select a letter first.",
         "msg_err_resolve_letter": "Could not resolve selected letter index.",
@@ -250,6 +312,25 @@ TRANSLATIONS = {
         "search_found_count": "Found {count} matching items",
         "col_id": "Id",
         "col_condition": "Condition",
+        "btn_ok": "OK",
+        "btn_cancel": "Cancel",
+        "msg_place_prompt": "Where should it go?",
+        "msg_place_hint": "A free spot is searched for in the container you pick. The item is "
+                          "turned 90° only if it fits no other way.",
+        "msg_place_no_targets": "No container with a known grid was found. Use Refresh Names "
+                                "from Game so the editor knows how big the containers are.",
+        "msg_place_no_space": "No free space in {target} for this item ({width}x{height}).",
+        "msg_place_partial": "Only {placed} of {wanted} fitted; {target} then had no room "
+                             "left.",
+        "target_same_container": "Same container as the original",
+        "target_inbox": "Inbox - collect it in the game yourself",
+        "msg_place_inbox_hint": "Inbox: the item is stored without a grid position. The game "
+                                "cannot place it, so it hands it to you as mail - which is "
+                                "where anything without room ends up anyway. Pick this when "
+                                "the containers are full or you want to sort it yourself.",
+        "target_tab": "Tab {idx} - {free} of {total} cells free",
+        "target_carried": "{name} (carried) - {free} of {total} cells free",
+        "target_container": "Container",
         "btn_close": "Close"
     },
     "de": {
@@ -268,6 +349,7 @@ TRANSLATIONS = {
         "btn_search": "Suchen",
         "btn_delete_mail": "Ausgewählten Brief löschen",
         "lbl_category": "Kategorie:",
+        "lbl_subcategory": "Unterkategorie:",
         "ctx_add_to_inv": "Ins Inventar spawnen",
         "lbl_warn_title": "☠ WARNUNG: HACKERMANS GEFAHRENZONE ☠",
         "lbl_warn_desc": "Das Manipulieren von Charakterwerten, Skills oder Händlern kann deinen Spielstand komplett zerschießen (bricken)!\nNutze diese Funktionen auf eigene Gefahr.",
@@ -311,6 +393,7 @@ TRANSLATIONS = {
         "status_refreshed": "Datenmapping aktualisiert von: {path}",
         "ctx_repair": "Gegenstand reparieren",
         "ctx_duplicate": "Gegenstand duplizieren",
+        "ctx_delete": "Gegenstand löschen",
         "tab_skills": "Skills",
         "tab_trader_balances": "Händlerguthaben",
         "lbl_balance": "Guthaben:",
@@ -333,7 +416,7 @@ TRANSLATIONS = {
         "scope_tab": "Reiter {idx}",
         "scope_shelter": "Lager",
         "msg_cheats_repair": "Erfolg! Alle {count} Gegenstände auf 100% repariert!",
-        "msg_cheats_skills": "Erfolg! Alle Skill-Level auf 10 gesetzt!",
+        "msg_cheats_skills": "Erfolg! {count} Skills auf ihr jeweiliges Maximum gesetzt!",
         "msg_cheats_traders": "Erfolg! 1.000.000 Credits an {count} Händler übertragen!",
         "status_cheat_repaired": "Alle {count} reparierbaren Gegenstände im Spielstand repariert",
         "status_cheat_maxed_skills": "Alle Skill-Level maximiert",
@@ -351,6 +434,9 @@ TRANSLATIONS = {
         "msg_unsaved_changes_prompt": "Du hast ungespeicherte Änderungen.\n\nJa: Änderungen speichern und beenden\nNein: Änderungen verwerfen und beenden\nAbbrechen: Editor geöffnet lassen",
         "status_changes_applied": "Änderungen am Spielstand angewendet",
         "status_changes_applied_backup": "Änderungen angewendet. Backup: backups\\{name}",
+        "status_changes_applied_backup_pruned": "Änderungen angewendet. Backup: backups\\{name} ({count} ältere Backups entfernt)",
+        "backups_keep_label": "Backups behalten:",
+        "backups_keep_hint": "Wie viele Backups im Ordner backups aufbewahrt werden. 0 behält alle.",
         "status_changes_discarded": "Ungespeicherte Änderungen verworfen",
         "msg_err_save_not_found": "--save-path existiert nicht:\n{candidate}",
         "msg_title_save_not_found": "Spielstand nicht gefunden",
@@ -395,7 +481,29 @@ TRANSLATIONS = {
         "msg_row_no_item_data": "Ausgewählte Zeile hat keine Gegenstandsdaten.",
         "msg_item_not_found": "Gegenstand nicht gefunden: {item_id}",
         "msg_duplicate_failed": "Duplizieren der Auswahl fehlgeschlagen.{failed_hint}",
+        "msg_delete_title": "Gegenstand löschen",
+        "msg_delete_confirm": "Diesen Gegenstand löschen?",
+        "msg_delete_confirm_many": "Diese {count} Gegenstände löschen? Die eine Zeile steht für alle davon.",
+        "msg_delete_attachments": "{count} angebaute Gegenstände werden mit gelöscht.",
+        "msg_delete_equipped": "Er steckt in einem Ausrüstungsslot. Der Slot bleibt danach leer.",
+        "msg_delete_revert_hint": "Bis zum Anwenden macht Änderungen verwerfen das wieder rückgängig.",
+        "msg_delete_structural": "Diese Zeile ist ein Lagerbehälter des Saves selbst und kein Gegenstand. Sie lässt sich nicht löschen.",
+        "status_items_deleted": "{count} Gegenstand/Gegenstände gelöscht (noch nicht gespeichert)",
         "msg_search_empty": "Bitte geben Sie einen Suchbegriff ein.",
+        "msg_skill_level_range": "Ungültige Stufe. Dieser Skill geht von 0 bis {max_level}.",
+        "msg_trader_level_range": "Ungültige Stufe. Ein Händler geht von {min_level} bis {max_level}.",
+        "btn_level_max": "MAX",
+        "lbl_skill_points": "Freie Skillpunkte:",
+        "tab_counters": "Statistik",
+        "col_counter_group": "Gruppe",
+        "col_counter_stat": "Wert",
+        "col_counter_value": "Zahl",
+        "col_counter_updated": "Zuletzt (UTC)",
+        "counters_sessions": "Sitzungen",
+        "counters_last_run": "Letzte Runde",
+        "counters_lifetime": "Gesamt",
+        "counters_hint": "Nur zur Ansicht: die Zähler des Spiels. Hier wird nichts zurückgeschrieben.",
+        "counters_empty": "Dieser Spielstand enthält keine Zähler.",
         "msg_select_search_result": "Bitte wählen Sie zuerst ein Suchergebnis aus.",
         "msg_select_letter": "Bitte wählen Sie zuerst einen Brief aus.",
         "msg_err_resolve_letter": "Index des ausgewählten Briefs konnte nicht aufgelöst werden.",
@@ -405,6 +513,28 @@ TRANSLATIONS = {
         "search_found_count": "Es wurden {count} übereinstimmende Gegenstände gefunden",
         "col_id": "Id",
         "col_condition": "Zustand",
+        "btn_ok": "OK",
+        "btn_cancel": "Abbrechen",
+        "msg_place_prompt": "Wohin soll es?",
+        "msg_place_hint": "Im gewählten Behälter wird ein freier Platz gesucht. Gedreht wird "
+                          "der Gegenstand nur, wenn er sonst nicht passt.",
+        "msg_place_no_targets": "Kein Behälter mit bekanntem Raster gefunden. Führe "
+                                "Spielnamen aktualisieren aus, damit der Editor die "
+                                "Behältergrößen kennt.",
+        "msg_place_no_space": "In {target} ist kein Platz für diesen Gegenstand "
+                              "({width}x{height}).",
+        "msg_place_partial": "Nur {placed} von {wanted} haben gepasst, danach war in "
+                             "{target} kein Platz mehr.",
+        "target_same_container": "Derselbe Behälter wie das Original",
+        "target_inbox": "Posteingang - im Spiel selbst abholen",
+        "msg_place_inbox_hint": "Posteingang: der Gegenstand wird ohne Rasterposition "
+                                "abgelegt. Das Spiel kann ihn nicht platzieren und gibt ihn "
+                                "dir als Post - dort landet ohnehin alles, was keinen Platz "
+                                "findet. Nimm das, wenn die Behälter voll sind oder du selbst "
+                                "einsortieren willst.",
+        "target_tab": "Reiter {idx} - {free} von {total} Feldern frei",
+        "target_carried": "{name} (am Körper) - {free} von {total} Feldern frei",
+        "target_container": "Behälter",
         "btn_close": "Schließen"
     },
     "ru": {
@@ -423,6 +553,7 @@ TRANSLATIONS = {
         "btn_search": "Найти",
         "btn_delete_mail": "Удалить выбранное письмо",
         "lbl_category": "Категория:",
+        "lbl_subcategory": "Подкатегория:",
         "ctx_add_to_inv": "Добавить в инвентарь",
         "lbl_warn_title": "☠ ВНИМАНИЕ: ОПАСНАЯ ЗОНА ХАКЕРА ☠",
         "lbl_warn_desc": "Редактирование характеристик персонажа, навыков или торговцев может полностью повредить (сломать) ваше сохранение!\nИспользуйте эти функции на свой страх и риск.",
@@ -466,6 +597,7 @@ TRANSLATIONS = {
         "status_refreshed": "Маппинг обновлен из: {path}",
         "ctx_repair": "Починить предмет",
         "ctx_duplicate": "Дублировать предмет",
+        "ctx_delete": "Удалить предмет",
         "tab_skills": "Навыки",
         "tab_trader_balances": "Баланс торговцев",
         "lbl_balance": "Баланс:",
@@ -488,7 +620,7 @@ TRANSLATIONS = {
         "scope_tab": "Вкладка {idx}",
         "scope_shelter": "Убежище",
         "msg_cheats_repair": "Успешно! Починено предметов: {count} (до 100%)!",
-        "msg_cheats_skills": "Успешно! Все уровни навыков установлены на 10!",
+        "msg_cheats_skills": "Успешно! Навыков поднято: {count}, каждый до своего максимума!",
         "msg_cheats_traders": "Успешно! Начислено 1 000 000 кредитов {count} торговцам!",
         "status_cheat_repaired": "Починено предметов: {count} (до 100%) в файле сохранения",
         "status_cheat_maxed_skills": "Максимизированы все уровни навыков",
@@ -506,6 +638,9 @@ TRANSLATIONS = {
         "msg_unsaved_changes_prompt": "У вас есть несохраненные изменения.\n\nДа: применить изменения и выйти\nНет: сбросить изменения и выйти\nОтмена: оставить редактор открытым",
         "status_changes_applied": "Изменения применены к файлу сохранения",
         "status_changes_applied_backup": "Изменения применены. Резервная копия: backups\\{name}",
+        "status_changes_applied_backup_pruned": "Изменения применены. Резервная копия: backups\\{name} (удалено старых копий: {count})",
+        "backups_keep_label": "Хранить копий:",
+        "backups_keep_hint": "Сколько резервных копий хранить в папке backups. 0 — хранить все.",
         "status_changes_discarded": "Несохраненные изменения сброшены",
         "msg_err_save_not_found": "--save-path не существует:\n{candidate}",
         "msg_title_save_not_found": "Файл сохранения не найден",
@@ -550,7 +685,29 @@ TRANSLATIONS = {
         "msg_row_no_item_data": "Выбранная строка не содержит данных предмета.",
         "msg_item_not_found": "Предмет не найден: {item_id}",
         "msg_duplicate_failed": "Не удалось дублировать выделенное.{failed_hint}",
+        "msg_delete_title": "Удаление предмета",
+        "msg_delete_confirm": "Удалить этот предмет?",
+        "msg_delete_confirm_many": "Удалить эти предметы ({count})? Одна строка означает все из них.",
+        "msg_delete_attachments": "Вместе с ним будет удалено вложенных предметов: {count}.",
+        "msg_delete_equipped": "Он находится в слоте снаряжения. Слот останется пустым.",
+        "msg_delete_revert_hint": "До применения изменений «Отменить изменения» вернёт всё назад.",
+        "msg_delete_structural": "Эта строка — контейнер самого сохранения, а не предмет. Её нельзя удалить.",
+        "status_items_deleted": "Удалено предметов: {count} (ещё не сохранено)",
         "msg_search_empty": "Пожалуйста, введите поисковый запрос.",
+        "msg_skill_level_range": "Неверный уровень. У этого навыка диапазон 0-{max_level}.",
+        "msg_trader_level_range": "Неверный уровень. У торговца диапазон {min_level}-{max_level}.",
+        "btn_level_max": "МАКС",
+        "lbl_skill_points": "Свободные очки навыков:",
+        "tab_counters": "Статистика",
+        "col_counter_group": "Группа",
+        "col_counter_stat": "Показатель",
+        "col_counter_value": "Значение",
+        "col_counter_updated": "Обновлено (UTC)",
+        "counters_sessions": "Сессии",
+        "counters_last_run": "Последний рейд",
+        "counters_lifetime": "Всего",
+        "counters_hint": "Только для просмотра: счётчики игры. Здесь ничего не записывается.",
+        "counters_empty": "В этом сохранении нет счётчиков.",
         "msg_select_search_result": "Сначала выберите результат поиска.",
         "msg_select_letter": "Сначала выберите письмо.",
         "msg_err_resolve_letter": "Не удалось определить индекс выбранного письма.",
@@ -560,6 +717,26 @@ TRANSLATIONS = {
         "search_found_count": "Найдено {count} совпадающих предметов",
         "col_id": "Id",
         "col_condition": "Состояние",
+        "btn_ok": "ОК",
+        "btn_cancel": "Отмена",
+        "msg_place_prompt": "Куда положить?",
+        "msg_place_hint": "В выбранном контейнере будет найдено свободное место. Предмет "
+                          "поворачивается только если иначе он не помещается.",
+        "msg_place_no_targets": "Не найдено контейнеров с известной сеткой. Выполните "
+                                "«Обновить названия из игры», чтобы редактор узнал размеры "
+                                "контейнеров.",
+        "msg_place_no_space": "В {target} нет места для этого предмета ({width}x{height}).",
+        "msg_place_partial": "Поместилось только {placed} из {wanted}; после этого в "
+                             "{target} не осталось места.",
+        "target_same_container": "Тот же контейнер, что у оригинала",
+        "target_inbox": "Входящие - забрать в игре самому",
+        "msg_place_inbox_hint": "Входящие: предмет сохраняется без позиции в сетке. Игра не "
+                                "может его разместить и выдаёт его вам письмом - туда и так "
+                                "попадает всё, чему не хватило места. Выбирайте это, когда "
+                                "контейнеры полны или вы хотите разложить сами.",
+        "target_tab": "Вкладка {idx} - свободно {free} из {total} клеток",
+        "target_carried": "{name} (при себе) - свободно {free} из {total} клеток",
+        "target_container": "Контейнер",
         "btn_close": "Закрыть"
     }
 }
@@ -590,6 +767,26 @@ SKILL_NAMES = {
     "26": "Sound locator",
     "27": "Lockpicker"
 }
+
+# Account levels. The real ceiling is `MaxLevel` in the game's level_progress_settings and
+# arrives through the mapping report as `max_account_level`; these are only what applies when
+# no report is there. Measured at 25 on 2026-07-28 - the same 25 that used to be hardcoded in
+# three places. Read them through `_max_level_for_account()`, never directly.
+TRADER_LEVEL_MIN = 1
+TRADER_LEVEL_MAX_FALLBACK = 25
+
+# One-click "fill trader balances" without a report. Each shop's own `ShopBalance` from the
+# game data is preferred; this is the flat value the cheat wrote before that existed.
+TRADER_BALANCE_FALLBACK = 1000000
+
+# The level controls on the Skills and Traders tabs all render at one size, 120x31 px, taken
+# from the plain button next to them. Both values are widths in characters: 14 of the button
+# font and 11 of the spinbox's wider Consolas digits come out the same. The paddings and
+# arrowsize in Level.TSpinbox / Step.TButton are part of that fit and were measured, not
+# guessed - test_skill_levels.py checks the three widgets still match.
+LEVEL_CONTROL_WIDTH = 14
+LEVEL_SPIN_WIDTH = 11
+LEVEL_SPIN_FONT = ("Consolas", 12, "bold")
 
 TRADER_NAMES = {
     "381e554d-0ab7-4111-9e8c-3710bd05d086": "Spider.net",
@@ -624,10 +821,15 @@ class SaveEditorGUI:
         # slot as it was before. Deliberately session-only - see _drop_shop_offer_undo_file.
         self.shop_offer_undo: dict[str, dict] = {}
         self._drop_shop_offer_undo_file()
+        # Read before the layout, which shows the value in the status bar.
+        self.manager.backup_keep = load_config_backup_keep()
 
         self.root.title("Cargo Hunters Save Editor")
-        self.root.minsize(1100, 650)
-        self._center_window(1100, 700)
+        # 680, not 650: the Hackerman tab's left column - warning, profile, three cheat
+        # buttons - needs 487px in German at the minimum, and 650 leaves only 468. Measured
+        # in all three languages; English and Russian were clipping by a few pixels too.
+        self.root.minsize(1100, 680)
+        self._center_window(1100, 720)
 
         # Style Setup (Premium Dark Mode)
         self.root.configure(bg="#1e1e1e")
@@ -720,7 +922,44 @@ class SaveEditorGUI:
             bordercolor="#3c3c3c"
         )
         
-        self.style.configure("Status.TLabel", 
+        # The level controls on the Skills and Traders tabs: a readout with its own arrows
+        # next to a MAX button, sized to match the plain button beside them. The paddings
+        # below are tuned so all three render the same height - measured, not guessed.
+        self.style.configure("Level.TSpinbox",
+            fieldbackground="#252526",
+            foreground="#3794ff",
+            insertcolor="#3794ff",
+            arrowsize=13,
+            arrowcolor="#3794ff",
+            bordercolor="#3c3c3c",
+            padding=[2, 4]
+        )
+        # Same font family as a plain button so that a width in characters means the same
+        # number of pixels on both; only the weight and the colour differ.
+        self.style.configure("Step.TButton",
+            background="#2d2d2d",
+            foreground="#3794ff",
+            font=("TkDefaultFont", 9, "bold"),
+            relief="flat",
+            padding=[8, 5]
+        )
+        self.style.map("Step.TButton",
+            background=[("active", "#0e639c"), ("pressed", "#094771")],
+            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")]
+        )
+
+        # A value the editor refuses to write. Red field, not a popup: the character fields
+        # are typed into and a dialog per keystroke would be unusable.
+        self.style.configure("Invalid.TEntry",
+            fieldbackground="#3a1d1d",
+            foreground="#ff8a8a",
+            insertcolor="#ff8a8a",
+            bordercolor="#c05050"
+        )
+
+        # Explanatory text in dialogs: dimmed, on the same background as everything else.
+        self.style.configure("Hint.TLabel", background="#1e1e1e", foreground="#9a9a9a")
+        self.style.configure("Status.TLabel",
             foreground="#969696"
         )
 
@@ -728,6 +967,7 @@ class SaveEditorGUI:
         self.scope_var = tk.StringVar()
         self.catalog_search_var = tk.StringVar()
         self.catalog_category_var = tk.StringVar(value="All")
+        self.catalog_subcategory_var = tk.StringVar(value="All")
         self.music_playing = False
         self.music_process = None
 
@@ -862,6 +1102,10 @@ class SaveEditorGUI:
         )
         self.context_menu.add_command(command=self._repair_selected)
         self.context_menu.add_command(command=self._duplicate_selected)
+        # The separator keeps the one destructive entry away from Duplicate, which sits
+        # directly above it. It occupies index 2, so Delete is relabelled as index 3.
+        self.context_menu.add_separator()
+        self.context_menu.add_command(command=self._delete_selected_items)
 
         mailbox_toolbar = ttk.Frame(self.tab_mailbox)
         mailbox_toolbar.pack(fill="x", padx=4, pady=4)
@@ -912,10 +1156,24 @@ class SaveEditorGUI:
             catalog_toolbar,
             textvariable=self.catalog_category_var,
             state="readonly",
-            width=12,
+            # The labels carry an id and a name ("24: Weapon Mod"); at 12 they were cut off.
+            width=20,
         )
         self.catalog_category_combo.pack(side="left", padx=(0, 12))
         self.catalog_category_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._on_category_selected(),
+        )
+        self.cat_subscope_lbl = ttk.Label(catalog_toolbar)
+        self.cat_subscope_lbl.pack(side="left", padx=(0, 6))
+        self.catalog_subcategory_combo = ttk.Combobox(
+            catalog_toolbar,
+            textvariable=self.catalog_subcategory_var,
+            state="readonly",
+            width=20,
+        )
+        self.catalog_subcategory_combo.pack(side="left", padx=(0, 12))
+        self.catalog_subcategory_combo.bind(
             "<<ComboboxSelected>>",
             lambda _event: self._refresh_catalog_tree(),
         )
@@ -924,7 +1182,7 @@ class SaveEditorGUI:
         catalog_search_entry = ttk.Entry(
             catalog_toolbar,
             textvariable=self.catalog_search_var,
-            width=34,
+            width=22,
         )
         catalog_search_entry.pack(side="left", padx=(0, 6))
         catalog_search_entry.bind("<Return>", lambda _event: self._refresh_catalog_tree())
@@ -1005,6 +1263,28 @@ class SaveEditorGUI:
         )
         self.mute_button.pack(side="right", padx=(6, 0))
 
+        # Backup retention sits with the other two app-wide settings rather than on a tab
+        # toolbar: the German and Russian labels already crowd those at the 1100px minimum.
+        self.backup_keep_var = tk.StringVar(value=str(self.manager.backup_keep))
+        # Same colours and arrows as the two level controls, but not their font: the status
+        # bar already crowds at the 1100px window minimum in German and Russian.
+        self.backup_keep_spin = ttk.Spinbox(
+            status_bar_frame,
+            from_=0,
+            to=999,
+            width=4,
+            justify="center",
+            style="Level.TSpinbox",
+            textvariable=self.backup_keep_var,
+            command=self._on_backup_keep_changed,
+        )
+        self.backup_keep_spin.pack(side="right", padx=(6, 0))
+        self.backup_keep_spin.bind("<FocusOut>", lambda _: self._on_backup_keep_changed())
+        self.backup_keep_spin.bind("<Return>", lambda _: self._on_backup_keep_changed())
+
+        self.backup_keep_label = ttk.Label(status_bar_frame)
+        self.backup_keep_label.pack(side="right", padx=(12, 0))
+
         status_bar = ttk.Label(status_bar_frame, textvariable=self.status_var, anchor="w", relief="flat", style="Status.TLabel")
         status_bar.pack(side="left", fill="x", expand=True)
 
@@ -1074,6 +1354,21 @@ class SaveEditorGUI:
             save_config_lang(new_lang)
             self._update_ui_language()
 
+    def _on_backup_keep_changed(self) -> None:
+        """Stores the new retention limit. Deliberately does not delete anything yet -
+        pruning happens when the next backup is written, so a stray click on the spinner
+        cannot destroy backups."""
+        try:
+            keep = max(0, int(self.backup_keep_var.get().strip()))
+        except ValueError:
+            self.backup_keep_var.set(str(self.manager.backup_keep))
+            return
+        if keep == self.manager.backup_keep:
+            return
+        self.manager.backup_keep = keep
+        self.backup_keep_var.set(str(keep))
+        save_config_backup_keep(keep)
+
     def _update_ui_language(self) -> None:
         t = TRANSLATIONS[self.current_lang]
         
@@ -1102,6 +1397,8 @@ class SaveEditorGUI:
         # Update context menu items
         self.context_menu.entryconfigure(0, label=t["ctx_repair"])
         self.context_menu.entryconfigure(1, label=t["ctx_duplicate"])
+        # Index 2 is the separator.
+        self.context_menu.entryconfigure(3, label=t["ctx_delete"])
         
         # 4. Mailbox Tab
         self.mail_delete_btn.configure(text=t["btn_delete_mail"])
@@ -1116,6 +1413,8 @@ class SaveEditorGUI:
         
         # 5. Catalog Tab
         self.cat_scope_lbl.configure(text=t["lbl_category"])
+        self.cat_subscope_lbl.configure(text=t["lbl_subcategory"])
+        self._refresh_subcategory_filter()
         self.cat_search_lbl.configure(text=t["lbl_search"])
         self.cat_search_btn.configure(text=t["btn_search"])
         self.catalog_menu.entryconfigure(0, label=t["ctx_add_to_inv"])
@@ -1149,13 +1448,24 @@ class SaveEditorGUI:
         self.cheat_max_skills_btn.configure(text=t["btn_cheat_max"])
         self.cheat_fill_trader_btn.configure(text=t["btn_cheat_fill"])
         
-        # Skills/Traders Subnotebook Tabs
+        # Skills/Traders/Counters Subnotebook Tabs
+        self.right_nb.tab(2, text=t["tab_counters"])
+        self.counters_tree.heading("group", text=t["col_counter_group"])
+        self.counters_tree.heading("stat", text=t["col_counter_stat"])
+        self.counters_tree.heading("value", text=t["col_counter_value"])
+        self.counters_tree.heading("updated", text=t["col_counter_updated"])
+        # The group names and the hint are translated *content*, not widget labels, so
+        # relabelling the headings is not enough - the rows have to be rebuilt.
+        self._refresh_counters_list()
+        self.skill_points_lbl.configure(text=t["lbl_skill_points"])
         self.right_nb.tab(0, text=t["tab_skills"])
         self.right_nb.tab(1, text=t["tab_trader_balances"])
         
         # Skills Control
         self.skill_level_lbl.configure(text=t["lbl_selected_skill"])
         self.set_skill_btn.configure(text=t["btn_set_skill"])
+        self.skill_max_btn.configure(text=t["btn_level_max"])
+        self.trader_max_btn.configure(text=t["btn_level_max"])
         
         # Skills Table Headings
         self.skills_tree.heading("id", text=t["col_skill_id"])
@@ -1190,6 +1500,8 @@ class SaveEditorGUI:
             self.help_text_area.insert("end", text, tag)
         self.help_text_area.configure(state="disabled")
         
+        self.backup_keep_label.configure(text=t["backups_keep_label"])
+
         # 8. Mute Button Text
         if hasattr(self, "music_muted") and self.music_muted:
             self.mute_button.configure(text=t["btn_unmute"])
@@ -1209,8 +1521,14 @@ class SaveEditorGUI:
             self._set_status("status_welcome")
 
     def _build_help_tab(self, parent: ttk.Frame) -> None:
+        # The scrollbar needs its own place next to the text, not inside it. Parented to the
+        # Text widget it floats on top and swallows the last word of every line that reaches
+        # the right edge - invisible until a paragraph was long enough to get there.
+        wrap_frame = ttk.Frame(parent)
+        wrap_frame.pack(fill="both", expand=True, padx=4, pady=4)
+
         self.help_text_area = tk.Text(
-            parent,
+            wrap_frame,
             wrap="word",
             bg="#252526",
             fg="#d4d4d4",
@@ -1221,10 +1539,9 @@ class SaveEditorGUI:
             bd=0,
             highlightthickness=0
         )
-        self.help_text_area.pack(fill="both", expand=True, padx=4, pady=4)
-        
-        scroll = ttk.Scrollbar(self.help_text_area, orient="vertical", command=self.help_text_area.yview)
+        scroll = ttk.Scrollbar(wrap_frame, orient="vertical", command=self.help_text_area.yview)
         scroll.pack(side="right", fill="y")
+        self.help_text_area.pack(side="left", fill="both", expand=True)
         self.help_text_area.configure(yscrollcommand=scroll.set)
         
         self.help_text_area.tag_configure("header", font=("TkDefaultFont", 11, "bold"), foreground="#3794ff")
@@ -1252,7 +1569,12 @@ class SaveEditorGUI:
             ("  - Repair Item: ", "highlight"),
             ("Restores item durability back to 100%.\n", "bullet"),
             ("  - Duplicate Item: ", "highlight"),
-            ("Creates an exact clone of the item in your bag.\n\n\n", "bullet"),
+            ("Creates a clone and asks which container it goes into; the original's own container is the default and Inbox is always available.\n", "bullet"),
+            ("  - Delete Item: ", "highlight"),
+            ("Removes the item and everything attached to it. To drop a single attachment "
+             "instead, expand the item and right-click that attachment's own row. Warehouse "
+             "tabs and storage roots are refused - they are part of the save's layout, not "
+             "items.\n\n\n", "bullet"),
             
             ("★ GAME ITEMS (SPAWNER CATALOG) ★\n\n", "header"),
             ("• Search & Filter: ", "bullet"),
@@ -1260,7 +1582,13 @@ class SaveEditorGUI:
             ("• Spawn Items: ", "bullet"),
             ("Right-click an item template in the list and pick ", "bullet"),
             ("Add to Inventory", "highlight"),
-            (" to spawn it into your active bag scope.\n", "bullet"),
+            (" and the editor then asks where it should go.\n", "bullet"),
+            ("• Where it goes: ", "bullet"),
+            ("The list names every container with room and how much of it. A free spot is searched for there, and the item is turned 90° only if it fits no other way. Several items are placed one by one, so you are told if only part of a batch fits.\n", "bullet"),
+            ("• Inbox: ", "bullet"),
+            ("Always offered, also when everything is full. The item is stored without a grid position, so the game cannot place it and hands it to you as mail - which is where anything without room ends up anyway.\n", "bullet"),
+            ("• Weapons reserve more than they show: ", "bullet"),
+            ("a rifle drawn 2x1 can keep a 6x2 area unusable. That is the game's own behaviour; the editor reserves the full area so nothing lands on top of it.\n", "bullet"),
             ("• Sell at a Trader: ", "bullet"),
             ("Right-click and pick ", "bullet"),
             ("Offer at Trader...", "highlight"),
@@ -1278,10 +1606,12 @@ class SaveEditorGUI:
             ("★ ☢ HACKERMAN'S LAB ☢ ★\n\n", "header"),
             ("• Profile Settings: ", "bullet"),
             ("Edit nickname, level, and experience points in the left pane.\n", "bullet"),
+            ("Unspent skill points sit there too, and are deliberately not capped - the level itself is, at 25. A Counters sub-tab shows the account's sessions, last run and lifetime totals, read-only.\n", "bullet"),
+            ("Set the level first, then the experience points if you want them: changing the level resets them to 0, so doing it the other way round throws your entry away. The most you can enter is one below the next level's goal - landing on it would level you up. The number beside each field is its limit.\n", "bullet"),
             ("• Character Skills: ", "bullet"),
             ("Select a skill from the list, input level, and click ", "bullet"),
             ("Set Level", "highlight"),
-            (".\n", "bullet"),
+            (". The list shows level and maximum, and every skill has its own ceiling taken from the game data - Combat stops at 6, Lockpicking at 5. Higher values are refused because the game would not accept them.\n", "bullet"),
             ("• Trader Balances: ", "bullet"),
             ("Select a trader, adjust level or balance, and click ", "bullet"),
             ("Set Stats", "highlight"),
@@ -1301,7 +1631,10 @@ class SaveEditorGUI:
             ("• Backups: ", "bullet"),
             ("Every apply first copies your save, with a timestamp, into the ", "bullet"),
             ("backups", "highlight"),
-            (" folder next to this program. Nothing is ever overwritten there.\n\n\n", "bullet"),
+            (" folder next to this program. Nothing there is ever overwritten. ", "bullet"),
+            ("Keep backups", "highlight"),
+            (" in the bottom right sets how many are kept - once the next one is written, "
+             "anything older than that is deleted. Set it to 0 to keep every backup.\n\n\n", "bullet"),
 
             ("★ SUPPORT THE PROJECT ★\n\n", "header"),
             ("• Support on Ko-fi: ", "bullet"),
@@ -1326,7 +1659,12 @@ class SaveEditorGUI:
             ("  - Gegenstand reparieren: ", "highlight"),
             ("Setzt die Haltbarkeit des Gegenstands auf 100% zurück.\n", "bullet"),
             ("  - Gegenstand duplizieren: ", "highlight"),
-            ("Erstellt eine exakte Kopie des Gegenstands in deiner Tasche.\n\n\n", "bullet"),
+            ("Erstellt eine Kopie und fragt, in welchen Behälter sie soll; vorgegeben ist der Behälter des Originals, der Posteingang steht immer zur Wahl.\n", "bullet"),
+            ("  - Gegenstand löschen: ", "highlight"),
+            ("Entfernt den Gegenstand samt allem, was daran hängt. Um nur einen einzelnen "
+             "Anbauteil zu entfernen, klappe den Gegenstand auf und mache den Rechtsklick auf "
+             "die Zeile des Anbauteils. Lagerreiter und Container-Wurzeln werden abgelehnt - "
+             "sie gehören zum Aufbau des Saves und sind keine Gegenstände.\n\n\n", "bullet"),
             
             ("★ GEGENSTANDSSPAWNER (KATALOG) ★\n\n", "header"),
             ("• Suchen & Filtern: ", "bullet"),
@@ -1334,7 +1672,13 @@ class SaveEditorGUI:
             ("• Gegenstände spawnen: ", "bullet"),
             ("Rechtsklick auf einen Gegenstand in der Liste, dann ", "bullet"),
             ("Ins Inventar spawnen", "highlight"),
-            (" um ihn in dein aktuelles Inventar zu übertragen.\n", "bullet"),
+            (" - der Editor fragt dann, wohin er soll.\n", "bullet"),
+            ("• Wohin es kommt: ", "bullet"),
+            ("Die Liste nennt jeden Behälter mit Platz und wie viel davon frei ist. Dort wird ein freier Platz gesucht, gedreht wird nur, wenn es sonst nicht passt. Mehrere Gegenstände werden einzeln platziert; passt nur ein Teil, wird es dir gesagt.\n", "bullet"),
+            ("• Posteingang: ", "bullet"),
+            ("Steht immer zur Wahl, auch wenn alles voll ist. Der Gegenstand wird ohne Rasterposition abgelegt, das Spiel kann ihn nicht platzieren und gibt ihn dir als Post - dort landet ohnehin alles, was keinen Platz findet.\n", "bullet"),
+            ("• Waffen belegen mehr als sie zeigen: ", "bullet"),
+            ("ein als 2x1 gezeichnetes Gewehr kann 6x2 sperren. Das macht das Spiel so; der Editor reserviert die volle Fläche, damit nichts darauf landet.\n", "bullet"),
             ("• Beim Händler verkaufen: ", "bullet"),
             ("Rechtsklick, dann ", "bullet"),
             ("Beim Händler anbieten...", "highlight"),
@@ -1353,10 +1697,12 @@ class SaveEditorGUI:
             ("★ ☢ HACKERMANS LABOR ☢ ★\n\n", "header"),
             ("• Profileinstellungen: ", "bullet"),
             ("Bearbeite Nickname, Level und Erfahrungspunkte im linken Bereich.\n", "bullet"),
+            ("Dort stehen auch die freien Skillpunkte, die bewusst unbegrenzt sind - das Level selbst ist es nicht, bei 25 ist Schluss. Der Reiter Statistik zeigt Sitzungen, letzte Runde und Gesamtwerte des Kontos, nur zur Ansicht.\n", "bullet"),
+            ("Setze zuerst das Level und danach die Erfahrungspunkte, falls du sie willst: ein Levelwechsel setzt sie auf 0, umgekehrt wirfst du deine Eingabe also weg. Mehr als eins unter dem Ziel der nächsten Stufe geht nicht - genau darauf würdest du aufsteigen. Die Zahl neben jedem Feld ist dessen Grenze.\n", "bullet"),
             ("• Charakterskills: ", "bullet"),
             ("Wähle einen Skill aus, gib das Level ein und klicke auf ", "bullet"),
             ("Level setzen", "highlight"),
-            (".\n", "bullet"),
+            (". Die Liste zeigt Stufe und Maximum, und jeder Skill hat seine eigene Obergrenze aus den Spieldaten - Kampf endet bei 6, Schlossknacken bei 5. Höhere Werte werden abgelehnt, weil das Spiel sie nicht annehmen würde.\n", "bullet"),
             ("• Händlerguthaben: ", "bullet"),
             ("Wähle einen Händler aus, passe Level oder Guthaben an und klicke auf ", "bullet"),
             ("Werte setzen", "highlight"),
@@ -1376,7 +1722,11 @@ class SaveEditorGUI:
             ("• Backups: ", "bullet"),
             ("Jedes Übernehmen kopiert deinen Spielstand vorher mit Zeitstempel in den Ordner ", "bullet"),
             ("backups", "highlight"),
-            (" neben diesem Programm. Dort wird nie etwas überschrieben.\n\n\n", "bullet"),
+            (" neben diesem Programm. Dort wird nie etwas überschrieben. ", "bullet"),
+            ("Backups behalten", "highlight"),
+            (" unten rechts legt fest, wie viele aufbewahrt werden - sobald das nächste "
+             "geschrieben wird, verschwindet alles Ältere darüber hinaus. Mit 0 bleibt "
+             "jedes Backup erhalten.\n\n\n", "bullet"),
 
             ("★ PROJEKT UNTERSTÜTZEN ★\n\n", "header"),
             ("• Auf Ko-fi unterstützen: ", "bullet"),
@@ -1401,7 +1751,12 @@ class SaveEditorGUI:
             ("  - Починить предмет: ", "highlight"),
             ("Восстанавливает прочность предмета до 100%.\n", "bullet"),
             ("  - Дублировать предмет: ", "highlight"),
-            ("Создает точную копию предмета в вашей сумке.\n\n\n", "bullet"),
+            ("Создаёт копию и спрашивает, в какой контейнер её поместить; по умолчанию — контейнер оригинала, Входящие доступны всегда.\n", "bullet"),
+            ("  - Удалить предмет: ", "highlight"),
+            ("Удаляет предмет вместе со всем, что к нему присоединено. Чтобы снять только "
+             "одно вложение, разверните предмет и нажмите правой кнопкой по строке самого "
+             "вложения. Вкладки склада и корневые контейнеры удалить нельзя - они часть "
+             "структуры сохранения, а не предметы.\n\n\n", "bullet"),
             
             ("★ СПАВН ПРЕДМЕТОВ (КАТАЛОГ) ★\n\n", "header"),
             ("• Поиск и фильтрация: ", "bullet"),
@@ -1409,7 +1764,13 @@ class SaveEditorGUI:
             ("• Спавн предметов: ", "bullet"),
             ("Щёлкните предмет в списке правой кнопкой и выберите ", "bullet"),
             ("Добавить в инвентарь", "highlight"),
-            (" для его добавления в инвентарь.\n", "bullet"),
+            (" - редактор спросит, куда его положить.\n", "bullet"),
+            ("• Куда попадёт: ", "bullet"),
+            ("В списке указан каждый контейнер со свободным местом. Там ищется свободная ячейка; поворот на 90° — только если иначе не влезает.\n", "bullet"),
+            ("• Входящие: ", "bullet"),
+            ("Доступно всегда, даже когда всё заполнено. Предмет сохраняется без позиции, и игра выдаёт его письмом.\n", "bullet"),
+            ("• Оружие занимает больше, чем кажется: ", "bullet"),
+            ("винтовка 2x1 может блокировать 6x2. Редактор резервирует всю площадь.\n", "bullet"),
             ("• Продажа у торговца: ", "bullet"),
             ("Правый щелчок, затем ", "bullet"),
             ("Предложить у торговца...", "highlight"),
@@ -1427,10 +1788,12 @@ class SaveEditorGUI:
             ("★ ☢ ЛАБОРАТОРИЯ ХАКЕРА ☢ ★\n\n", "header"),
             ("• Настройки профиля: ", "bullet"),
             ("Редактируйте никнейм, уровень и опыт в левой панели.\n", "bullet"),
+            ("Там же свободные очки навыков - они намеренно без предела, а вот уровень ограничен 25. Вкладка Статистика показывает сессии, последний рейд и общие итоги аккаунта, только для просмотра.\n", "bullet"),
+            ("Сначала задайте уровень, потом опыт, если он вам нужен: смена уровня обнуляет его, поэтому в обратном порядке ввод пропадёт. Больше, чем на единицу ниже цели следующего уровня, ввести нельзя - ровно на ней вы бы поднялись. Число рядом с полем - его предел.\n", "bullet"),
             ("• Навыки персонажа: ", "bullet"),
             ("Выберите навык из списка, введите уровень и нажмите ", "bullet"),
             ("Задать уровень", "highlight"),
-            (".\n", "bullet"),
+            (". В списке показаны уровень и максимум: у каждого навыка свой предел из данных игры - бой заканчивается на 6, взлом на 5. Более высокие значения отклоняются, потому что игра их не примет.\n", "bullet"),
             ("• Управление торговцами: ", "bullet"),
             ("Выберите торговца, измените его уровень или баланс и нажмите ", "bullet"),
             ("Задать параметры", "highlight"),
@@ -1450,7 +1813,11 @@ class SaveEditorGUI:
             ("• Резервные копии: ", "bullet"),
             ("Каждое применение сначала копирует сохранение с отметкой времени в папку ", "bullet"),
             ("backups", "highlight"),
-            (" рядом с программой. Там ничего никогда не перезаписывается.\n\n\n", "bullet"),
+            (" рядом с программой. Там ничего никогда не перезаписывается. ", "bullet"),
+            ("Хранить копий", "highlight"),
+            (" в правом нижнем углу задаёт, сколько копий остаётся: как только будет "
+             "записана следующая, всё более старое сверх этого числа удаляется. "
+             "Значение 0 сохраняет все копии.\n\n\n", "bullet"),
 
             ("★ ПОДДЕРЖАТЬ ПРОЕКТ ★\n\n", "header"),
             ("• Поддержать на Ko-fi: ", "bullet"),
@@ -1560,6 +1927,13 @@ class SaveEditorGUI:
         self.char_level_var.trace_add("write", self._on_char_profile_changed)
         self.level_entry = ttk.Entry(self.profile_lf, textvariable=self.char_level_var, width=10)
         self.level_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        self.level_entry.bind("<FocusOut>", self._snap_char_level)
+        self.level_entry.bind("<Return>", self._snap_char_level)
+
+        # The ceiling, spelled out next to the field it applies to - the same "3 / 5" idiom
+        # the skills list already uses. It also answers why a typed 900 turns red.
+        self.level_max_lbl = ttk.Label(self.profile_lf, style="Hint.TLabel")
+        self.level_max_lbl.grid(row=1, column=2, sticky="w", padx=(0, 5))
 
         self.xp_lbl = ttk.Label(self.profile_lf)
         self.xp_lbl.grid(row=2, column=0, sticky="w", pady=5)
@@ -1568,6 +1942,26 @@ class SaveEditorGUI:
         self.char_xp_var.trace_add("write", self._on_char_profile_changed)
         self.xp_entry = ttk.Entry(self.profile_lf, textvariable=self.char_xp_var, width=15)
         self.xp_entry.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        self.xp_entry.bind("<FocusOut>", self._snap_char_xp)
+        self.xp_entry.bind("<Return>", self._snap_char_xp)
+
+        # The XP needed for the next level. Blank when no mapping report is loaded, because
+        # then there is nothing to compute it from and the field is unbounded.
+        self.xp_goal_lbl = ttk.Label(self.profile_lf, style="Hint.TLabel")
+        self.xp_goal_lbl.grid(row=2, column=2, sticky="w", padx=(0, 5))
+
+        # Unspent skill points. Deliberately **not** capped at what the level grants (24 at
+        # level 25, one per level-up): "Max Out All Skills" already costs 62 and blows that
+        # budget wide open, so limiting the field next to that button would be for show. The
+        # tab carries a brick warning; this is what it is for.
+        self.skill_points_lbl = ttk.Label(self.profile_lf)
+        self.skill_points_lbl.grid(row=3, column=0, sticky="w", pady=5)
+
+        self.char_skill_points_var = tk.StringVar()
+        self.char_skill_points_var.trace_add("write", self._on_char_profile_changed)
+        self.skill_points_entry = ttk.Entry(
+            self.profile_lf, textvariable=self.char_skill_points_var, width=10)
+        self.skill_points_entry.grid(row=3, column=1, sticky="w", padx=5, pady=5)
 
         # 3. Cheats Frame
         self.cheats_lf = ttk.LabelFrame(left_pane, padding=10)
@@ -1588,9 +1982,11 @@ class SaveEditorGUI:
 
         self.tab_skills = ttk.Frame(self.right_nb)
         self.tab_traders = ttk.Frame(self.right_nb)
+        self.tab_counters = ttk.Frame(self.right_nb)
 
         self.right_nb.add(self.tab_skills, text="")
         self.right_nb.add(self.tab_traders, text="")
+        self.right_nb.add(self.tab_counters, text="")
 
         # Skills Layout
         skills_tree_frame = ttk.Frame(self.tab_skills)
@@ -1615,24 +2011,41 @@ class SaveEditorGUI:
 
         self.skills_tree.bind("<<TreeviewSelect>>", self._on_skill_selected)
 
-        skills_control_frame = ttk.Frame(self.tab_skills, padding=5)
+        skills_control_frame = ttk.Frame(self.tab_skills, padding=(5, 8))
         skills_control_frame.pack(fill="x", pady=5)
 
         self.skill_level_lbl = ttk.Label(skills_control_frame)
-        self.skill_level_lbl.pack(side="left", padx=5)
+        self.skill_level_lbl.pack(side="left", padx=(5, 10))
 
+        # Three controls of one size, taking their measurements from the widest of them.
+        # LEVEL_CONTROL_WIDTH is in characters and the styles are tuned so all three render
+        # the same height - a row of differently sized boxes was the complaint that started
+        # this. The spinbox arrows are the only stepper; separate minus and plus buttons were
+        # tried and removed as redundant.
         self.skill_level_var = tk.StringVar(value="0")
         self.skill_spin = ttk.Spinbox(
             skills_control_frame,
             from_=0,
             to=10,
             textvariable=self.skill_level_var,
-            width=5
+            width=LEVEL_SPIN_WIDTH,
+            justify="center",
+            font=LEVEL_SPIN_FONT,
+            style="Level.TSpinbox",
+            command=self._apply_skill_spin,
         )
-        self.skill_spin.pack(side="left", padx=5)
+        self.skill_spin.pack(side="left")
+        # Typing a level and pressing Return applies it too - the button is for the mouse.
+        self.skill_spin.bind("<Return>", lambda _e: self._set_selected_skill_level())
 
-        self.set_skill_btn = ttk.Button(skills_control_frame, command=self._set_selected_skill_level)
-        self.set_skill_btn.pack(side="left", padx=5)
+        self.skill_max_btn = ttk.Button(skills_control_frame, width=LEVEL_CONTROL_WIDTH,
+                                        style="Step.TButton",
+                                        command=self._max_selected_skill_level)
+        self.skill_max_btn.pack(side="left", padx=8)
+
+        self.set_skill_btn = ttk.Button(skills_control_frame, width=LEVEL_CONTROL_WIDTH,
+                                        command=self._set_selected_skill_level)
+        self.set_skill_btn.pack(side="left")
 
         # Traders Layout
         traders_tree_frame = ttk.Frame(self.tab_traders)
@@ -1660,21 +2073,34 @@ class SaveEditorGUI:
         self.traders_tree.configure(displaycolumns=("name", "trader_level", "balance"))
         self.traders_tree.bind("<<TreeviewSelect>>", self._on_trader_selected)
 
-        traders_control_frame = ttk.Frame(self.tab_traders, padding=5)
+        traders_control_frame = ttk.Frame(self.tab_traders, padding=(5, 8))
         traders_control_frame.pack(fill="x", pady=5)
 
         self.trader_level_lbl = ttk.Label(traders_control_frame)
-        self.trader_level_lbl.pack(side="left", padx=5)
+        self.trader_level_lbl.pack(side="left", padx=(5, 10))
 
+        # Same control as the skills tab, down to the sizes - the two tabs sit in the same
+        # notebook and a level is a level.
         self.trader_level_var = tk.StringVar(value="1")
         self.trader_level_spin = ttk.Spinbox(
             traders_control_frame,
-            from_=1,
-            to=25,
+            from_=TRADER_LEVEL_MIN,
+            # _load_template_name_map() runs before the widgets are built, so the report's
+            # ceiling is already known here; _refresh_traders_list re-applies it after a
+            # "Refresh Names from Game" run has replaced the report underneath.
+            to=self._max_level_for_account(),
             textvariable=self.trader_level_var,
-            width=5
+            width=LEVEL_SPIN_WIDTH,
+            justify="center",
+            font=LEVEL_SPIN_FONT,
+            style="Level.TSpinbox",
         )
-        self.trader_level_spin.pack(side="left", padx=5)
+        self.trader_level_spin.pack(side="left")
+
+        self.trader_max_btn = ttk.Button(traders_control_frame, width=LEVEL_CONTROL_WIDTH,
+                                         style="Step.TButton",
+                                         command=self._max_trader_level)
+        self.trader_max_btn.pack(side="left", padx=8)
 
         self.trader_balance_lbl = ttk.Label(traders_control_frame)
         self.trader_balance_lbl.pack(side="left", padx=5)
@@ -1690,6 +2116,103 @@ class SaveEditorGUI:
         self.set_trader_btn = ttk.Button(traders_control_frame, command=self._set_selected_trader_stats)
         self.set_trader_btn.pack(side="left", padx=5)
 
+        # Counters Layout - read-only. Nothing in here changes what the game does; it is the
+        # account's own record of sessions, kills, distance and loot.
+        counters_tree_frame = ttk.Frame(self.tab_counters)
+        counters_tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        counters_scroll = ttk.Scrollbar(counters_tree_frame, orient="vertical")
+        counters_scroll.pack(side="right", fill="y")
+
+        self.counters_tree = ttk.Treeview(
+            counters_tree_frame,
+            columns=("group", "stat", "value", "updated"),
+            show="headings",
+            selectmode="browse",
+            yscrollcommand=counters_scroll.set,
+        )
+        counters_scroll.configure(command=self.counters_tree.yview)
+        self.counters_tree.pack(side="left", fill="both", expand=True)
+
+        self.counters_tree.column("group", width=130, anchor="w")
+        self.counters_tree.column("stat", width=200, anchor="w")
+        self.counters_tree.column("value", width=120, anchor="e")
+        self.counters_tree.column("updated", width=170, anchor="w")
+
+        self.counters_hint = ttk.Label(self.tab_counters, style="Hint.TLabel",
+                                       wraplength=520, justify="left")
+        self.counters_hint.pack(anchor="w", padx=5, pady=(0, 5))
+
+    def _max_xp_for_level(self, level: int) -> int | None:
+        """The highest XP this level may hold, or None without the coefficients.
+
+        One below the goal: landing exactly on the goal is a level-up, and XP is not allowed
+        to move the level. At the ceiling there is no next level to trigger, so the goal
+        itself is fine - and it is what a real save carries there, 62000 of 62000.
+        """
+        goal = self._xp_goal_for_level(level)
+        if goal is None:
+            return None
+        if int(level) >= self._max_level_for_account():
+            return goal
+        return max(0, goal - 1)
+
+    def _update_char_bounds(self) -> None:
+        """Writes the two ceilings beside their fields. Skill points get none on purpose -
+        they have no ceiling, and the missing hint is the difference made visible."""
+        self.level_max_lbl.configure(text=f"/ {self._max_level_for_account()}")
+        top = self._max_xp_for_level(
+            self.manager.data.get("AccountDto", {}).get("ExperienceDto", {}).get("Level", 0))
+        self.xp_goal_lbl.configure(text="" if top is None else f"/ {top}")
+
+    def _snap_char_level(self, _event=None) -> None:
+        """Pulls an out-of-range level back into range when the field is left.
+
+        Clamping on every keystroke would make the field unusable - typing "25" passes
+        through "2", and typing "9" of an intended "9" is already over the ceiling. So the
+        value is refused while it is being typed and corrected once the user is done.
+        """
+        ceiling = self._max_level_for_account()
+        try:
+            level = int(self.char_level_var.get())
+        except ValueError:
+            level = self.manager.data.get("AccountDto", {}).get("ExperienceDto", {}).get("Level", 0)
+        snapped = max(0, min(ceiling, int(level)))
+        if self.char_level_var.get() != str(snapped):
+            self.char_level_var.set(str(snapped))
+        self.level_entry.configure(style="TEntry")
+
+        # A changed level makes the old XP meaningless - it counted towards a different goal -
+        # so the bar restarts at zero. Untouched level, untouched XP: tabbing through the form
+        # must not rewrite it.
+        if snapped != getattr(self, "_char_level_before_edit", snapped):
+            self.char_xp_var.set("0")
+        self._char_level_before_edit = snapped
+        self.xp_entry.configure(style="TEntry")
+        self._update_char_bounds()
+
+    def _snap_char_xp(self, _event=None) -> None:
+        """Pulls the typed XP into 0..goal. The level is left alone.
+
+        Letting XP roll over into levels was tried and dropped: the level is the value that
+        matters, and having the two fields push each other around made the order of editing
+        matter in a way nobody should have to think about. Set the level, then the XP - which
+        is what the Help tab says.
+        """
+        exp_dto = self.manager.data.setdefault("AccountDto", {}).setdefault("ExperienceDto", {})
+        top = self._max_xp_for_level(exp_dto.get("Level", 0))
+        try:
+            xp = max(0, int(self.char_xp_var.get()))
+        except ValueError:
+            xp = max(0, int(exp_dto.get("ExperiencePoints", 0) or 0))
+        if top is not None:
+            xp = min(xp, top)
+
+        if self.char_xp_var.get() != str(xp):
+            self.char_xp_var.set(str(xp))
+        self.xp_entry.configure(style="TEntry")
+        self._update_char_bounds()
+
     def _on_char_profile_changed(self, *args) -> None:
         if getattr(self, "_updating_char_fields", False):
             return
@@ -1700,15 +2223,52 @@ class SaveEditorGUI:
         nickname = self.char_nickname_var.get()
         account_dto["Nickname"] = nickname
 
+        # The level is capped at `MaxLevel` from the game data, 25 at the time of writing.
+        # Out of range, nothing is written and the field goes red: silently storing 25 while
+        # the box still read 900 meant applying a different value than the one on screen.
+        # Leaving the field snaps it to the ceiling - see _snap_char_level.
         try:
             level = int(self.char_level_var.get())
-            exp_dto["Level"] = level
         except ValueError:
-            pass
+            level = None
+        if level is not None and 0 <= level <= self._max_level_for_account():
+            exp_dto["Level"] = level
+            self.level_entry.configure(style="TEntry")
+        else:
+            self.level_entry.configure(style="Invalid.TEntry")
 
+        # The goal follows the level rather than being typed: it is computable from the game
+        # data, and a level changed without it leaves the XP bar measuring against the old one.
+        goal = self._xp_goal_for_level(exp_dto.get("Level", 0))
+        if goal is not None:
+            exp_dto["NextLevelExperienceGoal"] = goal
+
+        # XP is progress *within* the level, not a running total, and it may not reach the
+        # goal: that would be a level-up, and XP is not allowed to move the level. Same
+        # treatment as the level field - refused and marked while typing, snapped on leaving.
+        top = self._max_xp_for_level(exp_dto.get("Level", 0))
         try:
             xp = int(self.char_xp_var.get())
+        except ValueError:
+            xp = None
+        if xp is not None and xp >= 0 and (top is None or xp <= top):
             exp_dto["ExperiencePoints"] = xp
+            self.xp_entry.configure(style="TEntry")
+        else:
+            self.xp_entry.configure(style="Invalid.TEntry")
+
+        self._update_char_bounds()
+
+        skills_dto = account_dto.setdefault("SkillsDto", {})
+        try:
+            points = max(0, int(self.char_skill_points_var.get()))
+            # Zero means "no such key". The game omits any field holding its type's default,
+            # which is exactly why this one was invisible until six points were freed up -
+            # the same rule that hides a zero Position and an empty equipment slot.
+            if points:
+                skills_dto["SkillPointsCount"] = points
+            else:
+                skills_dto.pop("SkillPointsCount", None)
         except ValueError:
             pass
 
@@ -1728,17 +2288,50 @@ class SaveEditorGUI:
         xp = exp_dto.get("ExperiencePoints", 0)
         self.char_xp_var.set(str(xp))
 
+        # Absent means zero here, not "unknown" - see _on_char_profile_changed.
+        skills_dto = account_dto.get("SkillsDto", {})
+        self.char_skill_points_var.set(str(skills_dto.get("SkillPointsCount", 0)))
+        # What the level was before the user touched it, so leaving the field can tell an
+        # actual change from a pass-through.
+        self._char_level_before_edit = level
+
         self._updating_char_fields = False
 
+        self._update_char_bounds()
         self._refresh_skills_list()
         self._refresh_traders_list()
+        self._refresh_counters_list()
+
+    # Skill ids as a last resort. The list is only used when the generated report carries no
+    # skill data; `_active_skill_ids` prefers the game's own, which also knows which ones are
+    # switched off instead of hardcoding an unexplained gap at 8 and 15.
+    FALLBACK_SKILL_IDS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14,
+                          16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+
+    def _active_skill_ids(self) -> list[int]:
+        meta = getattr(self, "skills_meta", {})
+        active = sorted(
+            int(sid) for sid, row in meta.items()
+            if isinstance(row, dict) and not row.get("is_disabled") and str(sid).isdigit()
+        )
+        return active or list(self.FALLBACK_SKILL_IDS)
+
+    def _max_level_for_skill(self, skill_id: int) -> int:
+        """The skill's own ceiling. `MaxVersion` in the game data despite the name - measured
+        in-game: Combat and ItemFind stop at 6 and carry 6, Lockpick stops at 5 and carries 5.
+        Falls back to 10, which is what the editor allowed for every skill before."""
+        row = getattr(self, "skills_meta", {}).get(str(skill_id))
+        if isinstance(row, dict) and isinstance(row.get("max_level"), int):
+            if row["max_level"] > 0:
+                return row["max_level"]
+        return 10
 
     def _refresh_skills_list(self) -> None:
         for item in self.skills_tree.get_children():
             self.skills_tree.delete(item)
 
         skills_list = self.manager.data.get("AccountDto", {}).get("SkillsDto", {}).get("Skills", [])
-        all_skill_ids = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+        all_skill_ids = self._active_skill_ids()
 
         save_levels = {}
         for s in skills_list:
@@ -1752,10 +2345,57 @@ class SaveEditorGUI:
             self.skills_tree.insert(
                 "",
                 "end",
-                values=(s_id, skill_name, level)
+                values=(s_id, skill_name, f"{level} / {self._max_level_for_skill(s_id)}")
             )
 
+    def _counter_group_label(self, group: dict) -> str:
+        """A name for a counter group, derived from what it contains.
+
+        The group's own `$t` is a numeric type hash - the same kind the item components use,
+        which a game update can renumber, so it is not something to switch on. What the group
+        holds is stable: one carries the session tally, and of the two run counters the one
+        the game stamped with `LastSetAtUtc` is the run that just ended.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        stats = group.get("All") if isinstance(group.get("All"), dict) else {}
+        if "SessionNumber" in stats:
+            return t["counters_sessions"]
+        if group.get("LastSetAtUtc"):
+            return t["counters_last_run"]
+        return t["counters_lifetime"]
+
+    def _refresh_counters_list(self) -> None:
+        for item in self.counters_tree.get_children():
+            self.counters_tree.delete(item)
+
+        counters = (self.manager.data.get("AccountDto", {}).get("Counters", {}) or {})
+        groups = counters.get("Counters")
+        if not isinstance(groups, list):
+            groups = []
+
+        rows = 0
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            stats = group.get("All")
+            if not isinstance(stats, dict):
+                continue
+            label = self._counter_group_label(group)
+            stamp = str(group.get("LastSetAtUtc") or "").replace("T", " ")[:19]
+            for name, value in stats.items():
+                shown = f"{value:,}".replace(",", " ") if isinstance(value, int) else str(value)
+                self.counters_tree.insert(
+                    "", "end", values=(label, name, shown, stamp))
+                rows += 1
+
+        t = TRANSLATIONS[self.current_lang]
+        self.counters_hint.configure(
+            text=t["counters_hint"] if rows else t["counters_empty"])
+
     def _refresh_traders_list(self) -> None:
+        # "Refresh Names from Game" can replace the report while the window is open, so the
+        # ceiling is re-applied here rather than only at build time.
+        self.trader_level_spin.configure(to=self._max_level_for_account())
         for item in self.traders_tree.get_children():
             self.traders_tree.delete(item)
 
@@ -1783,7 +2423,10 @@ class SaveEditorGUI:
             return
         values = self.skills_tree.item(selected[0], "values")
         if values:
-            self.skill_level_var.set(values[2])
+            # The level column reads "3 / 5" - only the level goes into the spinbox, and the
+            # spinbox stops at that skill's own ceiling rather than a shared 10.
+            self.skill_level_var.set(str(values[2]).split("/")[0].strip())
+            self.skill_spin.configure(to=self._max_level_for_skill(int(values[0])))
 
     def _on_trader_selected(self, event=None) -> None:
         selected = self.traders_tree.selection()
@@ -1794,24 +2437,33 @@ class SaveEditorGUI:
             self.trader_level_var.set(values[3])
             self.trader_balance_var.set(values[4])
 
-    def _set_selected_skill_level(self) -> None:
+    def _selected_skill_id(self) -> int | None:
         selected = self.skills_tree.selection()
-        t = TRANSLATIONS[self.current_lang]
         if not selected:
-            messagebox.showwarning(t["title"], t["msg_no_item_selected"])
-            return
-
+            return None
         values = self.skills_tree.item(selected[0], "values")
-        skill_id = int(values[0])
+        return int(values[0]) if values else None
 
-        try:
-            new_level = int(self.skill_level_var.get())
-            if not (0 <= new_level <= 10):
-                raise ValueError()
-        except ValueError:
-            messagebox.showerror(t["title"], "Invalid level. Must be between 0 and 10.")
-            return
+    def _skill_level_in_save(self, skill_id: int) -> int:
+        """The level as staged, which is what minus and plus step from.
 
+        Deliberately not the spinbox: it is refilled by <<TreeviewSelect>>, and Tk delivers
+        that on the next idle rather than during the call that re-selects the row. Stepping
+        from the widget would work in the running app and be one behind anywhere else.
+        """
+        skills = (self.manager.data.get("AccountDto", {})
+                  .get("SkillsDto", {}).get("Skills", []))
+        for skill in skills:
+            if skill.get("Id") == skill_id:
+                try:
+                    return int(skill.get("Level") or 0)
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    def _write_skill_level(self, skill_id: int, new_level: int) -> None:
+        """Stages the level, refills the readout and puts the selection back on the row."""
+        t = TRANSLATIONS[self.current_lang]
         skills_list = self.manager.data.setdefault("AccountDto", {}).setdefault("SkillsDto", {}).setdefault("Skills", [])
         skill_item = next((s for s in skills_list if s.get("Id") == skill_id), None)
         if not skill_item:
@@ -1823,6 +2475,7 @@ class SaveEditorGUI:
             skill_item["NextLevelExperienceGoal"] = 2000
 
         self._refresh_skills_list()
+        self.skill_level_var.set(str(new_level))
         for item in self.skills_tree.get_children():
             val = self.skills_tree.item(item, "values")
             if val and int(val[0]) == skill_id:
@@ -1830,6 +2483,109 @@ class SaveEditorGUI:
                 break
 
         self._mark_pending_changes(t["status_skill_set"].format(skill_id=skill_id, level=new_level))
+
+    def _max_selected_skill_level(self) -> None:
+        t = TRANSLATIONS[self.current_lang]
+        skill_id = self._selected_skill_id()
+        if skill_id is None:
+            messagebox.showwarning(t["title"], t["msg_no_item_selected"])
+            return
+        self._write_skill_level(skill_id, self._max_level_for_skill(skill_id))
+
+    def _apply_skill_spin(self) -> None:
+        """The spinbox's own arrows. They stay usable, they are just no longer the only way."""
+        if self._selected_skill_id() is not None:
+            self._set_selected_skill_level()
+
+    def _set_selected_skill_level(self) -> None:
+        t = TRANSLATIONS[self.current_lang]
+        skill_id = self._selected_skill_id()
+        if skill_id is None:
+            messagebox.showwarning(t["title"], t["msg_no_item_selected"])
+            return
+
+        # Each skill has its own ceiling from the game data, not a shared 10.
+        max_level = self._max_level_for_skill(skill_id)
+        try:
+            new_level = int(self.skill_level_var.get())
+            if not (0 <= new_level <= max_level):
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror(
+                t["title"],
+                t["msg_skill_level_range"].format(max_level=max_level),
+            )
+            return
+
+        self._write_skill_level(skill_id, new_level)
+
+    def _xp_goal_for_level(self, level: int) -> int | None:
+        """`NextLevelExperienceGoal` for a character at this level, or None without the data.
+
+        The game builds it as `level * Multiply + Sum`, both coefficients from the band the
+        level falls into (1-4, 5-10, 11-28, 29-50). Checked against a real save: a level 25
+        character carries 62000, and 24 * 3000 - 10000 is exactly that.
+
+        Which is also the one uncertainty here. At the ceiling there is no next level, so the
+        stored goal is the one that was needed to *reach* it - hence `level - 1` at the top.
+        Whether a mid-level character carries `goal(level)` or `goal(level - 1)` could not be
+        told apart from a single save that happens to sit at 25.
+        """
+        progress = getattr(self, "level_progress", {}) or {}
+        multiply, summed = progress.get("xp_multiply"), progress.get("xp_sum")
+        if not isinstance(multiply, list) or not isinstance(summed, list):
+            return None
+
+        ceiling = self._max_level_for_account()
+        effective = min(max(int(level), 1), max(1, ceiling - 1))
+
+        def band(bands):
+            for entry in bands:
+                if not isinstance(entry, dict):
+                    continue
+                lo, hi = entry.get("min_level"), entry.get("max_level")
+                if isinstance(lo, int) and isinstance(hi, int) and lo <= effective <= hi:
+                    return entry.get("coefficient")
+            return None
+
+        factor, offset = band(multiply), band(summed)
+        if not isinstance(factor, (int, float)) or not isinstance(offset, (int, float)):
+            return None
+        return int(effective * factor + offset)
+
+    def _max_level_for_account(self) -> int:
+        """The account level ceiling, from the game data when the report carries it."""
+        level = getattr(self, "max_account_level", None)
+        if isinstance(level, int) and level > 0:
+            return level
+        return TRADER_LEVEL_MAX_FALLBACK
+
+    def _balance_for_shop(self, shop: dict, currency_id: str) -> int:
+        """This trader's maximum balance: `ShopBalance` in its template.
+
+        **The game caps a balance at that value** - confirmed in-game on 2026-07-28 by
+        writing a million and reading 500000 back. So the old flat million was never
+        actually granted; it was silently cut down. 500000 for the two traders that sell and
+        for QuickSell, 100 for the price-reference shop, nothing for the two raid shops.
+
+        Reading it from the report rather than hardcoding it means the cheat follows a game
+        update. A shop the report does not know falls back to the old flat value.
+        """
+        meta = getattr(self, "shops_meta", {}).get(
+            str(shop.get("ShopTemplateId") or "").strip().lower(), {}
+        )
+        balance = meta.get("balance") if isinstance(meta, dict) else None
+        if isinstance(balance, dict):
+            amount = balance.get(currency_id)
+            if isinstance(amount, (int, float)) and amount > 0:
+                return int(amount)
+        return TRADER_BALANCE_FALLBACK
+
+    def _max_trader_level(self) -> None:
+        """Unlike the skills tab this only moves the readout - the level and the balance are
+        written together by Set Stats, so applying one straight through would half-apply the
+        pair. The spinbox arrows behave the same way."""
+        self.trader_level_var.set(str(self._max_level_for_account()))
 
     def _set_selected_trader_stats(self) -> None:
         selected = self.traders_tree.selection()
@@ -1843,10 +2599,11 @@ class SaveEditorGUI:
 
         try:
             new_level = int(self.trader_level_var.get())
-            if not (1 <= new_level <= 25):
+            if not (TRADER_LEVEL_MIN <= new_level <= self._max_level_for_account()):
                 raise ValueError()
         except ValueError:
-            messagebox.showerror(t["title"], "Invalid level. Must be between 1 and 25.")
+            messagebox.showerror(t["title"], t["msg_trader_level_range"].format(
+                min_level=TRADER_LEVEL_MIN, max_level=self._max_level_for_account()))
             return
 
         try:
@@ -1899,14 +2656,15 @@ class SaveEditorGUI:
     def _cheat_max_skills(self) -> None:
         t = TRANSLATIONS[self.current_lang]
         skills_list = self.manager.data.setdefault("AccountDto", {}).setdefault("SkillsDto", {}).setdefault("Skills", [])
-        all_skill_ids = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
-
-        for s_id in all_skill_ids:
+        active_ids = self._active_skill_ids()
+        for s_id in active_ids:
             skill_item = next((s for s in skills_list if s.get("Id") == s_id), None)
             if not skill_item:
                 skill_item = {"Id": s_id}
                 skills_list.append(skill_item)
-            skill_item["Level"] = 10
+            # Each skill has its own ceiling; a flat 10 would write a level the game does
+            # not allow - Lockpick stops at 5.
+            skill_item["Level"] = self._max_level_for_skill(s_id)
             if "NextLevelExperienceGoal" not in skill_item:
                 skill_item["NextLevelExperienceGoal"] = 2000
 
@@ -1914,7 +2672,7 @@ class SaveEditorGUI:
 
         messagebox.showinfo(
             t["msg_success_title"],
-            t["msg_cheats_skills"],
+            t["msg_cheats_skills"].format(count=len(active_ids)),
             parent=self.root
         )
         self._mark_pending_changes(t["status_cheat_maxed_skills"])
@@ -1926,9 +2684,9 @@ class SaveEditorGUI:
 
         currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
         for shop in shops_list:
-            shop["AccountLevel"] = 25
+            shop["AccountLevel"] = self._max_level_for_account()
             balance_dict = shop.setdefault("Balance", {})
-            balance_dict[currency_key] = 1000000
+            balance_dict[currency_key] = self._balance_for_shop(shop, currency_key)
 
         self._refresh_traders_list()
 
@@ -2026,10 +2784,29 @@ class SaveEditorGUI:
         # 10. Deleted letter
         if raw_status == "Deleted one mailbox letter (not saved yet)":
             return t.get("status_mail_deleted_pending", "Deleted one mailbox letter (not saved yet)")
-            
+
+        # 10b. Deleted items
+        suffix = " item(s) (not saved yet)"
+        if raw_status.startswith("Deleted ") and raw_status.endswith(suffix):
+            count = raw_status[len("Deleted "):-len(suffix)]
+            return t.get(
+                "status_items_deleted",
+                "Deleted {count} item(s) (not saved yet)",
+            ).format(count=count)
+
+
         # 11. Changes applied
-        if raw_status.startswith("Changes applied to save file (backup: ") and raw_status.endswith(")"):
-            name = raw_status[len("Changes applied to save file (backup: "):-1]
+        prefix = "Changes applied to save file (backup: "
+        # Checked before the plain variant below, which would otherwise swallow the suffix
+        # into the file name. A backup name can never contain "; pruned ".
+        if raw_status.startswith(prefix) and "; pruned " in raw_status and raw_status.endswith(")"):
+            name, _, count = raw_status[len(prefix):-1].rpartition("; pruned ")
+            return t.get(
+                "status_changes_applied_backup_pruned",
+                "Changes applied. Backup: {name} ({count} older backups removed)",
+            ).format(name=name, count=count)
+        if raw_status.startswith(prefix) and raw_status.endswith(")"):
+            name = raw_status[len(prefix):-1]
             return t.get(
                 "status_changes_applied_backup",
                 "Changes applied. Backup: {name}",
@@ -2126,6 +2903,10 @@ class SaveEditorGUI:
         self.game_item_catalog = []
         self.game_item_meta_by_template_id = {}
         self.skills_name_map = dict(SKILL_NAMES)
+        self.skills_meta = {}
+        self.shops_meta = {}
+        self.max_account_level = TRADER_LEVEL_MAX_FALLBACK
+        self.level_progress = {}
         self.traders_name_map = dict(TRADER_NAMES)
 
         for path in self._mapping_candidates():
@@ -2152,6 +2933,9 @@ class SaveEditorGUI:
                         self.npc_name_map[npc_id] = npc_name
 
             skills_mapping = report.get("skills_mapping", {})
+            meta = report.get("skills_meta")
+            if isinstance(meta, dict):
+                self.skills_meta = meta
             if isinstance(skills_mapping, dict):
                 for k, v in skills_mapping.items():
                     self.skills_name_map[str(k)] = str(v)
@@ -2160,6 +2944,16 @@ class SaveEditorGUI:
             if isinstance(trader_mapping, dict):
                 for k, v in trader_mapping.items():
                     self.traders_name_map[str(k)] = str(v)
+
+            shops_meta = report.get("shops_meta")
+            if isinstance(shops_meta, dict):
+                self.shops_meta = shops_meta
+            max_level = report.get("max_account_level")
+            if isinstance(max_level, int) and max_level > 0:
+                self.max_account_level = max_level
+            level_progress = report.get("level_progress")
+            if isinstance(level_progress, dict):
+                self.level_progress = level_progress
 
             item_catalog = report.get("item_catalog", [])
             if isinstance(item_catalog, list):
@@ -2565,6 +3359,203 @@ class SaveEditorGUI:
             text = f"{text} | {condition}"
         return text
 
+    # --- Placement ------------------------------------------------------------------
+    # A container's grid is not in the save; it comes from the template's own component,
+    # which the extractor writes into each catalog row as `container`. Without it nothing
+    # can be placed reliably, and the game moves an item it cannot place into the mailbox.
+
+    def _footprint_for_template(self, template_id: str | None, rotated: bool = False):
+        """(w, h) a fresh item of this template needs.
+
+        Deliberately **not** MaxSize, even for a resizable weapon. Reserving the maximum
+        looked like the only footprint that could not overlap, and measuring a real save
+        showed the opposite: against the game's own layout it invents 80 overlapping cells
+        across five rifle cases, because a weapon in a case is stored at the size it really
+        takes (4x1) while its maximum is 6x3. See `_footprint_for_item`.
+        """
+        meta = self.game_item_meta_by_template_id.get(
+            str(template_id or "").lower(), {}
+        )
+        width, height = meta.get("width"), meta.get("height")
+        if not isinstance(width, int) or not isinstance(height, int):
+            return None
+        return (height, width) if rotated else (width, height)
+
+    def _footprint_for_item(self, item_id: str):
+        """(w, h) of an item as it occupies cells, `BaseComponent_rotated` swapping the axes.
+
+        The size stored on the item wins, because it is the game's own record of what the
+        item currently covers - a weapon that has grown with its attachments carries 4x1
+        while its template says 2x1, which is exactly the "shows smaller than it blocks"
+        effect visible in-game. Only an item that carries no size falls back to its template.
+        Measured across a real save: this and the plain template size both give zero
+        overlaps, and MaxSize gives 80.
+        """
+        item = self.manager.get_item(item_id) or {}
+        data = (item.get("AdditionalData") or {}).get("_data") or {}
+        rotated = bool(data.get("BaseComponent_rotated"))
+
+        template_id = str(item.get("TemplateId") or "").lower()
+        width = data.get("BaseComponent_width")
+        height = data.get("BaseComponent_height")
+        if not isinstance(width, int) or not isinstance(height, int):
+            template = self._footprint_for_template(template_id)
+            if template is None:
+                return None
+            width, height = template
+        if rotated:
+            return height, width
+        return width, height
+
+    def _container_cells_for(self, container_id: str):
+        item = self.manager.get_item(container_id)
+        if item is None:
+            return None
+        meta = self.game_item_meta_by_template_id.get(
+            str(item.get("TemplateId") or "").lower(), {}
+        )
+        return container_cells(meta.get("container"))
+
+    def _placement_in(self, container_id: str, width: int, height: int):
+        """(I, J, rotated) for a free spot, or None when the container has no room."""
+        cells = self._container_cells_for(container_id)
+        if not cells:
+            return None
+        occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
+        return find_placement(cells, occupied, width, height)
+
+    def _is_bookkeeping_container(self, container_id: str) -> bool:
+        """A container the game keeps for itself rather than one the player fills.
+
+        Told apart by its modelled grid holding a **single cell**. That is not a heuristic
+        about names: all 90 such templates in the report are internal - shelter modules, NPCs,
+        exit zones, highlights - and three of them sit on the character in a real save
+        (Phantom Items, Buff And Modifier, CraftRecipe Blueprints), two holding far more than
+        the one cell they claim. Their real size is therefore unknown, and a container whose
+        size is unknown must not be offered. No carried container is 1x1: a Hugger backpack is
+        24 cells and the smallest real one, a Safe Box, is 2. Category is empty for all of
+        them, so there is nothing else to separate them by.
+        """
+        item = self.manager.get_item(container_id) or {}
+        spec = self.game_item_meta_by_template_id.get(
+            str(item.get("TemplateId") or "").lower(), {}
+        ).get("container")
+        cells = container_cells(spec)
+        return bool(cells) and len(cells) == 1
+
+    def _placement_targets(self) -> list[tuple[str, str]]:
+        """(container id, label) for the containers an item can be placed into.
+
+        The warehouse tabs plus the containers carried on the character - a backpack, a rig,
+        a safe box. Deliberately nothing else: a weapon case in a tab is left alone, which
+        also keeps the editor out of the one place where an item's real footprint is least
+        certain. Anything whose grid the report does not describe is left out rather than
+        guessed at - weapon attachment points have their own item filters, and the shelter
+        root is not an item at all, so it has no template to read a size from.
+
+        A container with no free cell is left out too. Offering one is offering a dead end -
+        the choice is accepted and then answered with "no space", which reads like a bug.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        targets: list[tuple[str, str]] = []
+
+        def free_cells(container_id: str):
+            if self._is_bookkeeping_container(container_id):
+                return None
+            cells = self._container_cells_for(container_id)
+            if not cells:
+                return None
+            occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
+            free = len(cells) - len([c for c in occupied if c in cells])
+            return (free, len(cells)) if free > 0 else None
+
+        for idx, tab_id in enumerate(self.manager.get_inventory_tabs(), 1):
+            room = free_cells(tab_id)
+            if room is None:
+                continue
+            targets.append((tab_id, t["target_tab"].format(
+                idx=idx, free=room[0], total=room[1])))
+
+        for item_id in self.manager.get_character_items():
+            room = free_cells(item_id)
+            if room is None:
+                continue
+            name = self._template_name_for_item_id(item_id) or t["target_container"]
+            targets.append((item_id, t["target_carried"].format(
+                name=name, free=room[0], total=room[1])))
+
+        return targets
+
+    def _ask_placement_target(self, title: str, same_container_id: str | None = None):
+        """Lets the user pick where a new item goes. Returns a container id, the string
+        "same" for the original's own container, or None when cancelled.
+
+        A Combobox rather than a Listbox on purpose: a Listbox alongside entry fields
+        silently loses its selection unless exportselection is off, and there is no reason
+        to walk into that here.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        targets = self._placement_targets()
+        options: list[tuple[str, str]] = []
+        if same_container_id:
+            options.append(("same", t["target_same_container"]))
+        options.extend(targets)
+        # Always available, and the only option left once everything is full: an item with no
+        # grid position cannot be placed by the game, so it arrives as mail instead.
+        options.append(("inbox", t["target_inbox"]))
+
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.transient(self.root)
+        # Without this the Toplevel keeps the system background and the dark labels sit on a
+        # pale rectangle.
+        win.configure(bg="#1e1e1e")
+        chosen: list[str | None] = [None]
+
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text=t["msg_place_prompt"]).pack(anchor="w", pady=(0, 6))
+        combo = ttk.Combobox(body, state="readonly", width=54,
+                             values=[label for _cid, label in options])
+        combo.current(0)
+        combo.pack(fill="x")
+
+        hint = ttk.Label(body, text=t["msg_place_hint"], wraplength=430,
+                         style="Hint.TLabel", justify="left")
+        hint.pack(anchor="w", pady=(10, 0))
+        # Only shown while the inbox is actually selected - it explains one choice out of
+        # several and is noise the rest of the time.
+        inbox_hint = ttk.Label(body, text=t["msg_place_inbox_hint"], wraplength=430,
+                               style="Hint.TLabel", justify="left")
+
+        def on_choice(_event=None) -> None:
+            if options[combo.current()][0] == "inbox":
+                hint.pack_forget()
+                inbox_hint.pack(anchor="w", pady=(10, 0))
+            else:
+                inbox_hint.pack_forget()
+                hint.pack(anchor="w", pady=(10, 0))
+
+        combo.bind("<<ComboboxSelected>>", on_choice)
+        on_choice()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(14, 0))
+
+        def confirm() -> None:
+            chosen[0] = options[combo.current()][0]
+            win.destroy()
+
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right")
+        ttk.Button(buttons, text=t["btn_cancel"],
+                   command=win.destroy).pack(side="right", padx=(0, 6))
+
+        self._center_toplevel(win)
+        win.grab_set()
+        win.wait_window()
+        return chosen[0]
+
     def _on_tab_changed(self, event: tk.Event) -> None:
         selected_widget = event.widget.nametowidget(event.widget.select())
         if selected_widget == self.tab_mailbox:
@@ -2614,24 +3605,101 @@ class SaveEditorGUI:
         self.catalog_category_combo["values"] = values
         if self.catalog_category_var.get() not in values:
             self.catalog_category_var.set(all_text)
+        self._refresh_subcategory_filter()
+
+    def _selected_category_id(self) -> int | None:
+        raw = self.catalog_category_var.get().strip()
+        if raw and raw != TRANSLATIONS[self.current_lang]["all_categories"] and ":" in raw:
+            head = raw.split(":", 1)[0].strip()
+            if head.isdigit():
+                return int(head)
+        return None
+
+    def _refresh_subcategory_filter(self) -> None:
+        """Only the subcategories of the chosen category, and only those that hold something.
+
+        The game's own labels are not unique - ids 95 to 100 are all called "Blueprint" and
+        several have no label at all. So each entry carries how many items are in it, and a
+        duplicated label is qualified by the name its items **all** share: subcategory 95
+        holds eight "Bodypart Blueprint", so that is what it is called.
+
+        Deliberately not an example item. Picking the first one made 95 read as
+        "Bp_LeftArm_02_Model_03" although it also holds heads, torsos and legs - a single
+        member describes the member, not the group. Where the names disagree, nothing is
+        added rather than something misleading.
+        """
+        category_id = self._selected_category_id()
+        labels: dict[int, str] = {}
+        counts: dict[int, int] = {}
+        item_names: dict[int, set[str]] = {}
+        for row in self.game_item_catalog:
+            if category_id is not None and row.get("category_id") != category_id:
+                continue
+            sid = row.get("subcategory_id")
+            if not isinstance(sid, int):
+                continue
+            labels.setdefault(
+                sid, str(row.get("subcategory_label") or "").strip() or f"SubCategory {sid}")
+            counts[sid] = counts.get(sid, 0) + 1
+            name = str(row.get("name") or "").strip()
+            if name:
+                item_names.setdefault(sid, set()).add(name)
+
+        repeated = {
+            label for label, seen in
+            {lab: sum(1 for other in labels.values() if other == lab)
+             for lab in labels.values()}.items()
+            if seen > 1
+        }
+
+        all_text = TRANSLATIONS[self.current_lang]["all_categories"]
+        values = [all_text]
+        for sid in sorted(labels):
+            text = f"{sid}: {labels[sid]}"
+            shared = item_names.get(sid, set())
+            if labels[sid] in repeated and len(shared) == 1:
+                only = next(iter(shared))
+                if only != labels[sid]:
+                    text = f"{text} - {only}"
+            values.append(f"{text} ({counts[sid]})")
+        self.catalog_subcategory_combo["values"] = values
+        if self.catalog_subcategory_var.get() not in values:
+            self.catalog_subcategory_var.set(all_text)
+
+    def _on_category_selected(self) -> None:
+        self._refresh_subcategory_filter()
+        self._refresh_catalog_tree()
 
     def _refresh_catalog_tree(self) -> None:
         for iid in self.catalog_tree.get_children(""):
             self.catalog_tree.delete(iid)
 
-        category_filter = self.catalog_category_var.get().strip()
-        category_filter_id = None
         all_text = TRANSLATIONS[self.current_lang]["all_categories"]
-        if category_filter and category_filter != all_text and ":" in category_filter:
-            maybe_id = category_filter.split(":", 1)[0].strip()
-            if maybe_id.isdigit():
-                category_filter_id = int(maybe_id)
+        category_filter_id = self._selected_category_id()
+        subcategory_filter_id = None
+        raw_sub = self.catalog_subcategory_var.get().strip()
+        if raw_sub and raw_sub != all_text and ":" in raw_sub:
+            head = raw_sub.split(":", 1)[0].strip()
+            if head.isdigit():
+                subcategory_filter_id = int(head)
         search_filter = self.catalog_search_var.get().strip().lower()
+        # 164 templates share a localized name with another one - eight of them all read
+        # "Bodypart Blueprint". Those get the developer's own name appended, which tells 54
+        # of the 55 groups apart. Names that are already unique stay clean.
+        name_counts: dict[str, int] = {}
+        for row in self.game_item_catalog:
+            label = str(row.get("name") or "").strip()
+            if label:
+                name_counts[label] = name_counts.get(label, 0) + 1
+
         for row in self.game_item_catalog:
             template_id = str(row.get("template_id", "")).strip().lower()
             if not template_id:
                 continue
             name = str(row.get("name") or "").strip() or "(unnamed)"
+            alias = str(row.get("alias") or "").strip()
+            if alias and name_counts.get(name, 0) > 1:
+                name = f"{name} - {alias}"
             category_id = row.get("category_id")
             subcategory_id = row.get("subcategory_id")
             category_label = str(row.get("category_label") or "").strip()
@@ -2639,9 +3707,10 @@ class SaveEditorGUI:
             width = row.get("width")
             height = row.get("height")
 
-            if isinstance(category_filter_id, int):
-                if category_id != category_filter_id:
-                    continue
+            if isinstance(category_filter_id, int) and category_id != category_filter_id:
+                continue
+            if isinstance(subcategory_filter_id, int) and subcategory_id != subcategory_filter_id:
+                continue
             if search_filter:
                 haystack = (
                     f"{name} {template_id} {category_id} {subcategory_id} "
@@ -2733,44 +3802,102 @@ class SaveEditorGUI:
         if copy_count is None:
             return
 
-        parent_id = self._target_inventory_tab_parent_id()
-        if not parent_id:
-            messagebox.showerror(
-                t["tab_catalog"],
-                t["msg_no_inv_tab_found"],
-                parent=self.root,
-            )
-            return
-
         meta = self.game_item_meta_by_template_id.get(template_id, {})
         width = meta.get("width")
         height = meta.get("height")
-        added = 0
 
+        parent_id = self._ask_placement_target(t["msg_add_item_title"])
+        if not parent_id:
+            return
+
+        to_inbox = parent_id == "inbox"
+        target_label = t["target_inbox"] if to_inbox else ""
+        if not to_inbox:
+            for cid, label in self._placement_targets():
+                if cid == parent_id:
+                    target_label = label
+                    break
+
+        # The item still has to live in one of the three lists, so it is written into the
+        # first warehouse tab - only without a position, which is what sends it to the mail.
+        inbox_host = ""
+        if to_inbox:
+            tabs = self.manager.get_inventory_tabs()
+            if not tabs:
+                messagebox.showerror(t["tab_catalog"], t["msg_no_inv_tab_found"],
+                                     parent=self.root)
+                return
+            inbox_host = tabs[0]
+
+        footprint = self._footprint_for_template(template_id)
+        if footprint is None:
+            # Without a footprint there is no way to know what the item covers, and a wrong
+            # guess is what sends it to the mailbox.
+            messagebox.showerror(t["tab_catalog"], t["msg_place_no_targets"],
+                                 parent=self.root)
+            return
+        item_width, item_height = footprint
+
+        # Each spawned item takes cells away from the next one, so the free spot is looked
+        # up again per item rather than once up front.
+        def place_one(quantity: int | None) -> bool:
+            if to_inbox:
+                # No grid position at all. The game cannot place it and hands it over as
+                # mail, the same route anything without room takes by itself.
+                spot = (-1, -1, False)
+            else:
+                spot = self._placement_in(parent_id, item_width, item_height)
+            if spot is None:
+                return False
+            i, j, rotated = spot
+            created = self.manager.add_inventory_item(
+                parent_id=inbox_host if to_inbox else parent_id,
+                template_id=template_id,
+                width=width if isinstance(width, int) else None,
+                height=height if isinstance(height, int) else None,
+                quantity=quantity,
+                position=(i, j),
+            )
+            if rotated:
+                inner = created.setdefault("AdditionalData", {}).setdefault("_data", {})
+                inner["BaseComponent_rotated"] = True
+            return True
+
+        added = 0
+        wanted = 0
         if capacity:
             # Split the requested amount into full stacks plus a remainder, since the
             # game refuses quantities above StackCapacity.
             remaining = copy_count
             while remaining > 0:
                 chunk = min(remaining, capacity)
-                self.manager.add_inventory_item(
-                    parent_id=parent_id,
-                    template_id=template_id,
-                    width=width if isinstance(width, int) else None,
-                    height=height if isinstance(height, int) else None,
-                    quantity=chunk,
-                )
+                wanted += 1
+                if not place_one(chunk):
+                    break
                 remaining -= chunk
                 added += 1
         else:
+            wanted = copy_count
             for _ in range(copy_count):
-                self.manager.add_inventory_item(
-                    parent_id=parent_id,
-                    template_id=template_id,
-                    width=width if isinstance(width, int) else None,
-                    height=height if isinstance(height, int) else None,
-                )
+                if not place_one(None):
+                    break
                 added += 1
+
+        if not added:
+            messagebox.showwarning(
+                t["tab_catalog"],
+                t["msg_place_no_space"].format(
+                    target=target_label, width=item_width, height=item_height),
+                parent=self.root,
+            )
+            return
+        if added < wanted:
+            messagebox.showinfo(
+                t["tab_catalog"],
+                t["msg_place_partial"].format(
+                    placed=added, wanted=wanted, target=target_label),
+                parent=self.root,
+            )
 
         reopen = self._capture_open_member_ids()
         self._populate_scope_view(reopen_member_ids=reopen)
@@ -3188,19 +4315,90 @@ class SaveEditorGUI:
         )
 
     def _duplicate_members(self, members: list[str], copy_count: int) -> None:
+        t = TRANSLATIONS[self.current_lang]
+
+        # Where the copies go. "same" keeps each copy in its original's container, which is
+        # what the action used to do - except it also kept the original's cell, so the copy
+        # landed on top of it and the game moved it to the mailbox.
+        origin_parent = str((self.manager.get_item(members[0]) or {}).get("ParentId") or "")
+        target = self._ask_placement_target(
+            t["ctx_duplicate"], same_container_id=origin_parent or None)
+        if not target:
+            return
+
         created_ids: list[str] = []
         failures: list[str] = []
+        no_space = False
         for _ in range(copy_count):
             for item_id in members:
-                clone = self.manager.duplicate_item(item_id)
+                parent_id = target
+                if target == "same":
+                    parent_id = str(
+                        (self.manager.get_item(item_id) or {}).get("ParentId") or "")
+                    if not parent_id:
+                        failures.append(item_id)
+                        continue
+
+                if target == "inbox":
+                    # No grid position: the game cannot place it and delivers it as mail.
+                    parent_id = str(
+                        (self.manager.get_item(item_id) or {}).get("ParentId") or "")
+                    spot = (-1, -1, False)
+                else:
+                    footprint = self._footprint_for_item(item_id)
+                    if footprint is None:
+                        failures.append(item_id)
+                        continue
+                    spot = self._placement_in(parent_id, footprint[0], footprint[1])
+                if spot is None:
+                    no_space = True
+                    break
+
+                i, j, rotated = spot
+                clone = self.manager.duplicate_item(
+                    item_id, parent_id=parent_id, position=(i, j))
                 if not clone:
                     failures.append(item_id)
                     continue
+                inner = clone.setdefault("AdditionalData", {}).setdefault("_data", {})
+                if rotated:
+                    inner["BaseComponent_rotated"] = True
+                else:
+                    inner.pop("BaseComponent_rotated", None)
                 clone_id = clone.get("Id")
                 if isinstance(clone_id, str):
                     created_ids.append(clone_id)
+            if no_space:
+                break
 
-        t = TRANSLATIONS[self.current_lang]
+        target_label = t["target_same_container"]
+        if target == "inbox":
+            target_label = t["target_inbox"]
+        elif target != "same":
+            target_label = next(
+                (label for cid, label in self._placement_targets() if cid == target),
+                target,
+            )
+
+        if no_space and not created_ids:
+            footprint = self._footprint_for_item(members[0]) or (1, 1)
+            messagebox.showwarning(
+                t["ctx_duplicate"],
+                t["msg_place_no_space"].format(
+                    target=target_label, width=footprint[0], height=footprint[1]),
+                parent=self.root,
+            )
+            return
+        if no_space:
+            messagebox.showinfo(
+                t["ctx_duplicate"],
+                t["msg_place_partial"].format(
+                    placed=len(created_ids),
+                    wanted=copy_count * len(members),
+                    target=target_label,
+                ),
+                parent=self.root,
+            )
         if not created_ids:
             failed_hint = f" First failed item: {failures[0]}" if failures else ""
             messagebox.showerror(t["title"], t["msg_duplicate_failed"].format(failed_hint=failed_hint))
@@ -3231,6 +4429,45 @@ class SaveEditorGUI:
         if copy_count is None:
             return
         self._duplicate_members(members, copy_count)
+
+    def _delete_selected_items(self) -> None:
+        """Deletes the selected row - an item with its attachments, or a single attachment
+        when that attachment's own row is the one selected."""
+        members = self._selected_members()
+        if not members:
+            return
+        t = TRANSLATIONS[self.current_lang]
+
+        # Warehouse tabs are not rows in this tree, but the guard is what makes that a
+        # property of the code rather than of the current layout.
+        if any(self.manager.is_structural(member) for member in members):
+            messagebox.showwarning(t["msg_delete_title"], t["msg_delete_structural"])
+            return
+
+        total = sum(len(self.manager.collect_subtree(member)) for member in members)
+        # A grouped row covers several separate items, so the question has to say so - "this
+        # item" over two of them is exactly the wrong wording in a delete dialog.
+        question = (
+            t["msg_delete_confirm"] if len(members) == 1
+            else t["msg_delete_confirm_many"].format(count=len(members))
+        )
+        lines = [question, self._render_entry_text(members)]
+        if total > len(members):
+            lines.append(t["msg_delete_attachments"].format(count=total - len(members)))
+        if any(self.manager.is_equipped(member) for member in members):
+            lines.append(t["msg_delete_equipped"])
+        lines.append(t["msg_delete_revert_hint"])
+
+        if not messagebox.askyesno(t["msg_delete_title"], "\n\n".join(lines)):
+            return
+
+        deleted = sum(len(self.manager.delete_item(member)) for member in members)
+        if not deleted:
+            return
+
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        self._mark_pending_changes(f"Deleted {deleted} item(s) (not saved yet)")
 
     def _search_items(self) -> None:
         query = self.search_var.get().strip().lower()
@@ -3428,7 +4665,12 @@ class SaveEditorGUI:
         # their undo records away - only the ones that never got written.
         for record in self.shop_offer_undo.values():
             record["applied"] = True
-        if backup_path:
+        if backup_path and self.manager.last_pruned:
+            self._clear_pending_changes(
+                f"Changes applied to save file (backup: {backup_path.name}"
+                f"; pruned {len(self.manager.last_pruned)})"
+            )
+        elif backup_path:
             self._clear_pending_changes(f"Changes applied to save file (backup: {backup_path.name})")
         else:
             self._clear_pending_changes("Changes applied to save file")

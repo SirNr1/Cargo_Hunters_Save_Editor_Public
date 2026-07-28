@@ -37,21 +37,32 @@ If you find this tool helpful and want to support its continued development:
   * Edit items across character equipment, shelter containers, and inventory tabs.
   * Stack-aware duplication (+ copy count).
   * Recursive item repair (weapons, durability, condition metrics).
+  * Delete an item together with everything attached to it — or expand it and delete a single attachment, so a scope goes without touching the rifle.
+* **📍 Choose Where a New Item Goes**:
+  * Duplicating and spawning both ask first, and list every container that has room: `Tab 1 - 73 of 240 cells free`, `Hugger (carried) - 22 of 24`.
+  * A free spot is then searched for inside that container, turning the item 90° only if it fits no other way. Spawning ten looks for ten spots, and says so if only part of the batch fits.
+  * **Inbox** is always offered, also when everything is full — the game hands the item to you as mail.
 * **📦 Full Game Items Catalog**:
   * Browse the complete extracted item database by category.
   * Add catalog items directly into your inventory.
+  * Stackable items are spawned as real stacks; the **Stack** column shows how many units fit in one.
 * **🤝 Trader Stock Swapping**:
   * Temporarily place any catalog item into a trader's shop stock for purchase in-game.
   * Reverts when the trader's stock refreshes in-game, or immediately via the dialog's **Undo** button (current editor session only).
 * **📬 Mailbox Manager**:
   * View inbox messages, reward counts, read states, and NPC senders (`NpcBioId` resolution).
 * **☢️ Hackerman's Lab**:
-  * Edit nickname, character level, XP, individual skill levels (0–10), trader shop levels, and balance.
+  * Edit nickname, character level, XP, individual skill levels, trader shop levels, and balance.
+  * Every ceiling is read from the game's own data instead of a hardcoded number: each skill has its **own** maximum (the `MAX` button uses it), the character level stops where the game stops, and a trader's balance stops at what that shop is allowed to hold — writing more than the game accepts just gets cut down silently on the next load.
+  * XP is capped at the current level's goal, which is shown next to the field. Set the level first; changing it resets XP to 0.
+  * **Unspent skill points** can be added, and are deliberately not capped.
+  * A **Counters** sub-tab shows the account's sessions, last run and lifetime tallies, read-only.
   * One-click convenience boosts.
 * **🛡️ Safe Staging & Auto-Backup**:
   * Edits are staged in memory.
   * **Apply Changes** saves to disk while creating a timestamped backup in the `backups/` directory.
   * **Discard Changes** reverts pending edits to the last saved state.
+  * **Keep backups** in the bottom right caps how many are kept — 20 by default, 0 keeps every one. Only files the editor named itself are ever deleted, so your own copies in that folder are safe.
   * Auto-detects Steam `offline.save` files on Windows and Linux.
 * **🌍 Multi-Language Support (i18n)**:
   * English, German (Deutsch), and Russian (Русский).

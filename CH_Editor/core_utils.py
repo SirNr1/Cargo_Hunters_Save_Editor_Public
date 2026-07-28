@@ -1,15 +1,20 @@
 import json
 import copy
+import re
 import shutil
 import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set, Tuple
 
 
 # The in-game currency ("credits"), used as ItemTemplateId in every shop price.
 CREDITS_TEMPLATE_ID = "cb567810-cc82-424f-893f-299c704ffb12"
+
+# How many timestamped backups to keep. 0 or less keeps every one, which is what the
+# editor did before this was configurable.
+BACKUP_KEEP_DEFAULT = 20
 
 
 def default_backup_dir() -> Path:
@@ -25,6 +30,169 @@ def default_backup_dir() -> Path:
     return base / "backups"
 
 
+# offline_<date>_<time>_<label>[_<n>].save - the shape `save()` writes below.
+_BACKUP_NAME = re.compile(r"^offline_(\d{4}-\d{2}-\d{2}_\d{6})_(.+?)(?:_(\d+))?\.save$")
+
+# Where each origin's items live inside the save, for code that has an origin in hand.
+_ORIGIN_LIST_PATH = {
+    "EquipmentDto": ("EquipmentDto", "Items"),
+    "ShelterItemDto": ("ShelterItemDto", "Container", "Items"),
+    "InventoryDto": ("InventoryDto", "ItemsContainerDto", "Items"),
+}
+
+
+def _backup_order(path: Path) -> Optional[Tuple[datetime, int]]:
+    """Creation order taken from the file name, or None for a name this editor did not write.
+
+    The name is authoritative and the modification time is not: a PyInstaller rebuild wipes
+    `dist/`, so the backups folder has to be copied aside and back, which stamps every file
+    with the same mtime while the names still carry the real order.
+    """
+    match = _BACKUP_NAME.match(path.name)
+    if not match:
+        return None
+    try:
+        stamp = datetime.strptime(match.group(1), "%Y-%m-%d_%H%M%S")
+    except ValueError:
+        return None
+    return stamp, int(match.group(3) or 1)
+
+
+def prune_backups(
+    backup_dir: Path,
+    keep: int,
+    protect: Optional[Path] = None,
+) -> List[Path]:
+    """Deletes the oldest backups until at most `keep` remain. Returns what was deleted.
+
+    Only files whose names this editor produced are candidates, so anything else living in
+    the folder is left alone. `protect` - the backup the caller just wrote - counts towards
+    the limit but is never deleted. `keep` of 0 or less prunes nothing.
+    """
+    if keep <= 0 or not backup_dir.is_dir():
+        return []
+
+    protected = protect.resolve() if protect else None
+    candidates: List[Tuple[Tuple[datetime, int], Path]] = []
+    total = 0
+    for path in backup_dir.glob("offline_*.save"):
+        order = _backup_order(path)
+        if order is None:
+            continue
+        total += 1
+        if protected is not None and path.resolve() == protected:
+            continue
+        candidates.append((order, path))
+
+    candidates.sort()
+    removed: List[Path] = []
+    for _, path in candidates[: max(0, total - keep)]:
+        try:
+            path.unlink()
+            removed.append(path)
+        except OSError:
+            # A backup held open by another program is not worth failing the save over.
+            pass
+    return removed
+
+
+# --- Container geometry --------------------------------------------------------------
+# An item's Position is the game's `Cell {int I, int J}` and a size is its
+# `ItemSize {int Width, int Height}`, with **Width on I and Height on J**. Measured rather
+# than assumed: across four warehouse tabs of a real save that mapping produced zero
+# footprint overlaps and the other one produced 126.
+#
+# A container's grid is not in the save. It comes from the template's own component, which
+# `extract_template_mapping.py` writes into each catalog row as `container`.
+
+
+def container_cells(spec: Any) -> Optional[Set[Tuple[int, int]]]:
+    """Every cell a container offers, or None when its shape is not modelled.
+
+    `spec` is the `container` entry of a row in the generated mapping report:
+
+      simple - one free grid of Width x Height (a warehouse tab is 8x30 or 8x15)
+      split  - a union of sub-rectangles at given cells. A cell outside every rectangle does
+               not exist, which is the dead area in a rig or vest.
+      slots  - fixed compartments, each with its own item filter. None: choosing a
+               compartment for an arbitrary item is not a geometry question.
+
+    A `simple` container can carry AllowExpand, meaning the game grows it past that size.
+    The base size is used anyway - staying inside it is provably accepted, and two internal
+    containers in a real save had already expanded well beyond their 1x1 base.
+    """
+    if not isinstance(spec, dict):
+        return None
+
+    kind = spec.get("kind")
+    if kind == "simple":
+        width, height = spec.get("width"), spec.get("height")
+        if (isinstance(width, int) and isinstance(height, int)
+                and width > 0 and height > 0):
+            return {(i, j) for i in range(width) for j in range(height)}
+        return None
+
+    if kind == "split":
+        cells: Set[Tuple[int, int]] = set()
+        for region in spec.get("regions") or []:
+            if not isinstance(region, dict):
+                continue
+            width, height = region.get("width"), region.get("height")
+            if not isinstance(width, int) or not isinstance(height, int):
+                continue
+            i0, j0 = int(region.get("i") or 0), int(region.get("j") or 0)
+            cells.update((i0 + di, j0 + dj)
+                         for di in range(width) for dj in range(height))
+        return cells or None
+
+    return None
+
+
+def find_free_cell(
+    cells: Optional[Set[Tuple[int, int]]],
+    occupied: Any,
+    width: int,
+    height: int,
+) -> Optional[Tuple[int, int]]:
+    """The topmost, leftmost cell where a width x height item fits with nothing in the way.
+
+    Scans J before I so a container fills the way its grid reads. `cells` is what the
+    container offers, `occupied` anything already standing in it - a dict or set of cells.
+    """
+    if not cells or width <= 0 or height <= 0:
+        return None
+
+    max_i = max(i for i, _ in cells)
+    max_j = max(j for _, j in cells)
+    for j in range(max_j + 1):
+        for i in range(max_i + 1):
+            if all(
+                (i + di, j + dj) in cells and (i + di, j + dj) not in occupied
+                for di in range(width)
+                for dj in range(height)
+            ):
+                return i, j
+    return None
+
+
+def find_placement(
+    cells: Optional[Set[Tuple[int, int]]],
+    occupied: Any,
+    width: int,
+    height: int,
+) -> Optional[Tuple[int, int, bool]]:
+    """(I, J, rotated) for a width x height item, turned 90 degrees only if it fits no other
+    way. Rotation swaps the two axes and is what `BaseComponent_rotated` records."""
+    cell = find_free_cell(cells, occupied, width, height)
+    if cell:
+        return cell[0], cell[1], False
+    if width != height:
+        cell = find_free_cell(cells, occupied, height, width)
+        if cell:
+            return cell[0], cell[1], True
+    return None
+
+
 class SaveDataManager:
     def __init__(self, save_path: str, backup_dir: Optional[str] = None):
         self.save_path = Path(save_path)
@@ -33,6 +201,9 @@ class SaveDataManager:
             if backup_dir
             else default_backup_dir()
         )
+        self.backup_keep = BACKUP_KEEP_DEFAULT
+        # What the last save() pruned, for the caller to report. Never read back here.
+        self.last_pruned: List[Path] = []
         self.data: Dict[str, Any] = {}
         self.item_tree: Dict[str, Any] = {}
         self.item_origin: Dict[str, str] = {}  # Id -> 'EquipmentDto' | 'ShelterItemDto' | 'InventoryDto'
@@ -133,18 +304,42 @@ class SaveDataManager:
             .setdefault("Items", [])
         )
 
-    def next_position_for_parent(self, parent_id: str) -> int:
-        used: List[int] = []
+    def cell_of(self, item_id: str) -> Tuple[int, int]:
+        """The item's own (I, J) cell. A missing key means zero - the serializer drops a
+        field holding its type's default, the same rule that hides an empty equipment slot."""
+        item = self.get_item(item_id) or {}
+        position = item.get("Position")
+        if not isinstance(position, dict):
+            return 0, 0
+        return int(position.get("I") or 0), int(position.get("J") or 0)
+
+    def occupied_cells(self, parent_id: str, footprint_of) -> Dict[Tuple[int, int], str]:
+        """Which cells of a container its children already take, mapped to the child's id.
+
+        `footprint_of(item_id)` returns the child's (width, height) with rotation already
+        applied, or None when the size is unknown. An unknown child still blocks its own
+        anchor cell - something is standing there even if its extent is a guess.
+        """
+        taken: Dict[Tuple[int, int], str] = {}
         for child_id in self.get_children(parent_id):
-            item = self.get_item(child_id)
-            if not item:
-                continue
-            pos = item.get("Position")
-            if isinstance(pos, dict):
-                j = pos.get("J")
-                if isinstance(j, int):
-                    used.append(j)
-        return max(used) + 1 if used else 0
+            i, j = self.cell_of(child_id)
+            size = footprint_of(child_id)
+            width, height = size if size else (1, 1)
+            for di in range(max(1, int(width))):
+                for dj in range(max(1, int(height))):
+                    taken.setdefault((i + di, j + dj), child_id)
+        return taken
+
+    def origin_for_parent(self, parent_id: str) -> str:
+        """Which of the three item lists a new child of this container belongs in."""
+        p_id = str(parent_id)
+        origin = self.item_origin.get(p_id)
+        if origin:
+            return origin
+        for key, root in self.section_roots.items():
+            if str(root) == p_id:
+                return key
+        return "InventoryDto"
 
     def add_inventory_item(
         self,
@@ -153,16 +348,26 @@ class SaveDataManager:
         width: int | None = None,
         height: int | None = None,
         quantity: int | None = None,
+        position: Optional[Tuple[int, int]] = None,
     ) -> dict:
         """Creates one item. `quantity` makes it a stack of that many units, which is how
         the game stores stackables: a single item carrying StackableComponent_quantity,
-        not one item per unit. Keep it within the template's StackCapacity."""
+        not one item per unit. Keep it within the template's StackCapacity.
+
+        `position` is the (I, J) cell inside the parent container; callers that want the item
+        to survive should get one from `find_placement`, because the game moves an item it
+        cannot place into the mailbox. Without one the item lands on (0, 0).
+
+        The item is appended to the list its parent lives in, so this also spawns into
+        equipment and shelter containers, not only the warehouse.
+        """
+        i, j = position if position else (0, 0)
         item: dict = {
             "Id": str(uuid.uuid4()),
             "TemplateId": str(template_id),
             "ParentId": str(parent_id),
             "IsInspected": True,
-            "Position": {"J": self.next_position_for_parent(parent_id)},
+            "Position": {"I": int(i), "J": int(j)},
         }
 
         inner: Dict[str, Any] = {}
@@ -174,41 +379,166 @@ class SaveDataManager:
         if inner:
             item["AdditionalData"] = {"_data": inner}
 
-        target_list = self._inventory_origin_list()
+        origin = self.origin_for_parent(parent_id)
+        target_list = self._origin_list(origin)
+        if target_list is None:
+            target_list = self._inventory_origin_list()
+            origin = "InventoryDto"
         target_list.append(item)
 
         item_id = str(item["Id"])
         self.item_tree[item_id] = item
-        self.item_origin[item_id] = "InventoryDto"
+        self.item_origin[item_id] = origin
         self.children_map.setdefault(str(parent_id), []).append(item_id)
         return item
 
-    def duplicate_item(self, item_id: str) -> Optional[dict]:
-        """Clones an item into the same container list it came from, next to its original."""
+    def duplicate_item(
+        self,
+        item_id: str,
+        parent_id: Optional[str] = None,
+        position: Optional[Tuple[int, int]] = None,
+    ) -> Optional[dict]:
+        """Clones an item, by default into the same container next to its original.
+
+        `parent_id` moves the copy into a different container and `position` sets its (I, J)
+        cell there. Without a position the copy keeps the original's, which puts it exactly
+        on top of the item it was cloned from - the game then relocates it to the mailbox.
+        Callers should pass a cell from `find_placement`.
+
+        Attachments are not cloned: the copy is the item alone.
+        """
         item = self.get_item(item_id)
-        origin = self.item_origin.get(str(item_id))
-        if not item or not origin:
+        if not item:
             return None
 
         clone = copy.deepcopy(item)
         clone["Id"] = str(uuid.uuid4())
+        if parent_id is not None:
+            clone["ParentId"] = str(parent_id)
+        if position is not None:
+            clone["Position"] = {"I": int(position[0]), "J": int(position[1])}
 
-        if origin == "EquipmentDto":
-            target_list = self.data.setdefault("EquipmentDto", {}).setdefault("Items", [])
-        elif origin == "ShelterItemDto":
-            target_list = self.data.setdefault("ShelterItemDto", {}).setdefault("Container", {}).setdefault("Items", [])
-        else:
-            target_list = self.data.setdefault("InventoryDto", {}).setdefault("ItemsContainerDto", {}).setdefault("Items", [])
+        target_parent = str(clone.get("ParentId") or "")
+        origin = (
+            self.origin_for_parent(target_parent) if target_parent
+            else self.item_origin.get(str(item_id))
+        )
+        target_list = self._origin_list(origin) if origin else None
+        if target_list is None:
+            return None
         target_list.append(clone)
 
         c_id = str(clone["Id"])
         self.item_tree[c_id] = clone
         self.item_origin[c_id] = origin
-        p_id = clone.get("ParentId")
-        if p_id:
-            self.children_map.setdefault(str(p_id), []).append(c_id)
+        if target_parent:
+            self.children_map.setdefault(target_parent, []).append(c_id)
 
         return clone
+
+    # --- Deleting -----------------------------------------------------------------
+
+    def _origin_list(self, origin: Optional[str]) -> Optional[List[dict]]:
+        """The list in `self.data` that an origin's items live in, or None if absent.
+
+        Read-only on purpose, unlike the `setdefault` chains above: a save that never had
+        one of these lists must not gain an empty one just because something was deleted.
+        """
+        node: Any = self.data
+        for key in _ORIGIN_LIST_PATH.get(origin or "", ()):
+            if not isinstance(node, dict):
+                return None
+            node = node.get(key)
+        return node if isinstance(node, list) else None
+
+    def collect_subtree(self, item_id: str) -> List[str]:
+        """The item plus everything attached to it, the item itself first.
+
+        Attachments are separate items linked by ParentId, so a weapon's scope and that
+        scope's own parts only come along if the hierarchy is walked. Tolerates a cycle
+        and ids that are not in the tree, which a hand-edited save can contain.
+        """
+        order: List[str] = []
+        seen: set[str] = set()
+        stack = [str(item_id)]
+        while stack:
+            current = stack.pop()
+            if current in seen or current not in self.item_tree:
+                continue
+            seen.add(current)
+            order.append(current)
+            stack.extend(self.get_children(current))
+        return order
+
+    def is_structural(self, item_id: str) -> bool:
+        """True for the containers the save's layout rests on rather than ordinary items:
+        the shelter and inventory roots, and the warehouse tabs. Each one holds a whole
+        grid the game expects to find."""
+        s_id = str(item_id)
+        return s_id in set(self.section_roots.values()) or s_id in self.get_inventory_tabs()
+
+    def is_equipped(self, item_id: str) -> bool:
+        """True if an equipment slot holds this item, so deleting it empties that slot."""
+        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo", [])
+        return any(
+            isinstance(slot, dict) and str(slot.get("ItemId")) == str(item_id)
+            for slot in slots
+        )
+
+    def delete_item(self, item_id: str) -> List[str]:
+        """Removes an item and everything attached to it. Returns the ids that went.
+
+        The attachments have to go too: one left behind would keep a ParentId pointing at
+        an item that no longer exists. An equipment slot holding the item is dropped along
+        with it, because the save lists a SlotsInfo entry only for an occupied slot - 17
+        entries for 31 slot types in a real save, every one of them carrying an ItemId. A
+        missing entry is what an empty slot looks like.
+
+        Positions are deliberately left alone. A container's slots are fixed compartments,
+        so the freed Position.J is simply an empty one; renumbering the survivors would
+        move items the user did not touch.
+
+        Returns an empty list for an unknown id and for the structural containers that
+        `is_structural` names.
+        """
+        root = str(item_id)
+        if root not in self.item_tree or self.is_structural(root):
+            return []
+
+        doomed = self.collect_subtree(root)
+        gone = set(doomed)
+        parent_id = str(self.item_tree[root].get("ParentId") or "")
+
+        # One pass per affected list. A subtree could in principle span two of them, so
+        # the origins come from the doomed items rather than from the root alone.
+        for origin in {self.item_origin.get(i) for i in gone}:
+            origin_list = self._origin_list(origin)
+            if origin_list is None:
+                continue
+            origin_list[:] = [
+                entry for entry in origin_list
+                if not (isinstance(entry, dict) and str(entry.get("Id")) in gone)
+            ]
+
+        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo")
+        if isinstance(slots, list):
+            slots[:] = [
+                slot for slot in slots
+                if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
+            ]
+
+        for i in doomed:
+            self.item_tree.pop(i, None)
+            self.item_origin.pop(i, None)
+            self.children_map.pop(i, None)
+
+        siblings = self.children_map.get(parent_id)
+        if siblings is not None:
+            siblings[:] = [child for child in siblings if child != root]
+            if not siblings:
+                del self.children_map[parent_id]
+
+        return doomed
 
     # --- Trader stock -------------------------------------------------------------
     # Shop offers live in AccountShops / AccountPricelists, outside the three item lists,
@@ -303,6 +633,7 @@ class SaveDataManager:
         given. `backup_name` is a label; the stored file gets a timestamp so backups
         accumulate instead of overwriting each other. Returns the backup path."""
         bak_path: Optional[Path] = None
+        self.last_pruned = []
         if backup_name:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -313,6 +644,10 @@ class SaveDataManager:
                 bak_path = self.backup_dir / f"offline_{stamp}_{backup_name}_{counter}.save"
                 counter += 1
             shutil.copyfile(self.save_path, bak_path)
+            # Prune after the copy, so a failure here cannot cost the caller their backup.
+            self.last_pruned = prune_backups(
+                self.backup_dir, self.backup_keep, protect=bak_path
+            )
 
         with self.save_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
