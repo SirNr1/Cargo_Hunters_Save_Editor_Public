@@ -8,7 +8,7 @@
 Названия предметов, навыков, торговцев и отправителей писем читаются из файлов самой игры,
 поэтому вы работаете с понятными названиями, а не с идентификаторами GUID.
 
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-lightgrey.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ---
 
