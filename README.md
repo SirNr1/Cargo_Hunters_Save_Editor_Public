@@ -121,21 +121,11 @@ the section above tells you how.
 
 ## 📄 License & Terms
 
-This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+This project is licensed under the **[GNU General Public License v3.0](LICENSE)** (GPLv3).
 
-* **Noncommercial only**: any noncommercial purpose is permitted — personal use, study,
-  private entertainment, hobby projects, and use by charities, schools and public
-  institutions. Selling it, charging for access to it, or putting it behind a subscription
-  is **not** permitted.
-* **Modify and share freely**: you may change it and distribute your changes, as long as
-  the use stays noncommercial.
-* **Keep the notices**: pass on the license text and the `Required Notice:` line with any
-  copy you distribute.
-
-This is a *source-available* license rather than an OSI-approved open-source one — the
-noncommercial restriction is the point. It replaced CC BY-NC-SA 4.0, which Creative Commons
-themselves advise against for software: their licenses carry no source-distribution terms
-and no patent grant.
+* **Open Source**: You may freely use, modify, and distribute this software.
+* **Copyleft**: If you distribute modified versions of this software, you must release your changes under the same GPLv3 license and provide the source code.
+* **Keep the notices**: You must include the original copyright notice and a copy of the license with any distribution.
 
 ### Disclaimer
 *This software is an unofficial, community-made fan tool and is NOT affiliated with, endorsed by, or associated with the developers or publishers of Cargo Hunters.*
