@@ -29,9 +29,11 @@
 | --- | --- |
 | ![Каталог предметов](docs/screenshots/02-game-items.png) | ![Лаборатория Хакермана](docs/screenshots/03-hackermans-lab.png) |
 
-| Почта | Предложить у торговца |
+| Почта | Статистика |
 | --- | --- |
-| ![Почта](docs/screenshots/04-mailbox.png) | ![Предложить у торговца](docs/screenshots/05-offer-at-trader.png) |
+| ![Почта](docs/screenshots/04-mailbox.png) | ![Статистика](docs/screenshots/06-counters.png) |
+
+![Предложить у торговца](docs/screenshots/05-offer-at-trader.png)
 
 ---
 

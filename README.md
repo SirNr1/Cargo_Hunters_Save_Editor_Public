@@ -25,9 +25,11 @@ If you find this tool helpful and want to support its continued development:
 | --- | --- |
 | ![Game Items](docs/screenshots/02-game-items.png) | ![Hackerman's Lab](docs/screenshots/03-hackermans-lab.png) |
 
-| Mailbox | Offer at Trader |
+| Mailbox | Counters |
 | --- | --- |
-| ![Mailbox](docs/screenshots/04-mailbox.png) | ![Offer at Trader](docs/screenshots/05-offer-at-trader.png) |
+| ![Mailbox](docs/screenshots/04-mailbox.png) | ![Counters](docs/screenshots/06-counters.png) |
+
+![Offer at Trader](docs/screenshots/05-offer-at-trader.png)
 
 ---
 
