@@ -8,6 +8,10 @@ from typing import Any
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+# The in-game currency. Every template price and every shop price is denominated in it, so
+# reading a price means picking this template out of the price's item list. Repeated here
+# rather than imported: this script is standalone and does not depend on CH_Editor.
+CREDITS_ID = "cb567810-cc82-424f-893f-299c704ffb12"
 LOG_TEMPLATE_RE = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)TemplateId=([0-9a-fA-F-]{36})",
     flags=re.IGNORECASE,
@@ -337,6 +341,39 @@ def _extract_max_durability(entry: dict[str, Any]) -> float | None:
     return found
 
 
+def _extract_has_wear_condition(entry: dict[str, Any]) -> bool:
+    """Whether the template uses the 0-4 `Condition_d` wear scale.
+
+    The other condition field, `DurabilityComponent_durability`, is covered by
+    `max_durability` above - a template carries one mechanism or the other, never both, and
+    a weapon uses this one. Without this flag there is no way to tell a rifle (wears out,
+    ceiling 4) from a magazine (no condition at all), because both come out with no
+    `max_durability`.
+
+    Identified by the fields the component carries, not by its numeric `$t`, which a game
+    update renumbers. 150 templates at the time of writing.
+    """
+    found = False
+
+    def walk(obj: Any) -> None:
+        nonlocal found
+        if found:
+            return
+        if isinstance(obj, dict):
+            if "MinMaxConditionToRepair" in obj or "DecreaseByType" in obj:
+                found = True
+                return
+            for nested in obj.values():
+                walk(nested)
+            return
+        if isinstance(obj, list):
+            for nested in obj:
+                walk(nested)
+
+    walk(entry)
+    return found
+
+
 def _extract_stack_capacity(entry: dict[str, Any]) -> int | None:
     """How many units fit into one stack, e.g. 60 rounds or 10000 credits.
 
@@ -362,6 +399,528 @@ def _extract_stack_capacity(entry: dict[str, Any]) -> int | None:
 
     walk(entry)
     return found
+
+
+def _extract_price(entry: dict[str, Any]) -> int | None:
+    """The template's own value in credits, as the game's base price.
+
+    Stored the way every shop price is - a list of item stacks rather than a number - so the
+    currency is read out of it rather than assumed: `{"Price": {"Items": [{"ItemTemplateId":
+    "<credits>", "Count": 4800}]}}`. 1131 of 1595 templates carry one; the rest genuinely
+    have no price, which is not the same as a price of zero.
+
+    Only a price denominated in credits is returned. Nothing else was seen in the data, and
+    a price in some other item would be a quantity of that item, not a number of credits.
+    """
+    found: int | None = None
+
+    def walk(obj: Any) -> None:
+        nonlocal found
+        if found is not None:
+            return
+        if isinstance(obj, dict):
+            price = obj.get("Price")
+            if isinstance(price, dict) and isinstance(price.get("Items"), list):
+                for part in price["Items"]:
+                    if not isinstance(part, dict):
+                        continue
+                    if normalize_guid(str(part.get("ItemTemplateId") or "")) != CREDITS_ID:
+                        continue
+                    count = part.get("Count")
+                    if isinstance(count, (int, float)) and not isinstance(count, bool):
+                        found = int(count)
+                        return
+            for nested in obj.values():
+                walk(nested)
+            return
+        if isinstance(obj, list):
+            for nested in obj:
+                walk(nested)
+
+    walk(entry)
+    return found
+
+
+def _extract_mass(entry: dict[str, Any]) -> float | None:
+    """How heavy one unit is. Sits in the same component as `Size` and `LocalizedName`.
+
+    1162 of 1595 templates carry it. A missing value stays missing rather than becoming 0.0:
+    the game omits the field on templates that have no weight at all, and a blueprint
+    weighing zero and a blueprint with no weight recorded are different statements.
+    """
+    found: float | None = None
+
+    def walk(obj: Any) -> None:
+        nonlocal found
+        if found is not None:
+            return
+        if isinstance(obj, dict):
+            value = obj.get("Mass")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                found = float(value)
+                return
+            for nested in obj.values():
+                walk(nested)
+            return
+        if isinstance(obj, list):
+            for nested in obj:
+                walk(nested)
+
+    walk(entry)
+    return found
+
+
+_LOCALIZED_MARKUP = re.compile(r"<[^>]*>")
+_LOCALIZED_LINK = re.compile(r"\{link\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\}")
+_LOCALIZED_PLACEHOLDER = re.compile(r"\{[^}]*\}")
+
+
+def _build_all_localization_tables(localization_env: Any) -> dict[str, dict[int, str]]:
+    """Every string table in the bundle at once, keyed by its full name.
+
+    Link placeholders point at arbitrary tables - a quest name pulls from `Quests`,
+    `UI_Common` and `Shelter` - so resolving them needs all of them, not one prefix.
+    """
+    tables: dict[str, dict[int, str]] = {}
+    for obj in localization_env.objects:
+        if obj.type.name != "MonoBehaviour":
+            continue
+        try:
+            tree = obj.read_typetree()
+        except Exception:
+            continue
+        if not isinstance(tree, dict):
+            continue
+        name = tree.get("m_Name")
+        data = tree.get("m_TableData")
+        if not isinstance(name, str) or not isinstance(data, list):
+            continue
+        entries: dict[int, str] = {}
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            entry_id = row.get("m_Id")
+            text = row.get("m_Localized")
+            if isinstance(entry_id, int) and isinstance(text, str):
+                entries[entry_id] = text
+        if entries:
+            tables[name] = entries
+    return tables
+
+
+def _build_shared_key_maps(shared_env: Any) -> dict[str, dict[str, int]]:
+    """`KEY -> entry id` per table, read from the `<Table> Shared Data` assets.
+
+    The same mechanism the category labels already go through, just not restricted to one
+    table: a link names a table and a key, and only the shared data can turn that key into
+    the numeric id the string tables are indexed by.
+    """
+    key_maps: dict[str, dict[str, int]] = {}
+    for obj in shared_env.objects:
+        if obj.type.name != "MonoBehaviour":
+            continue
+        try:
+            tree = obj.read_typetree()
+        except Exception:
+            continue
+        if not isinstance(tree, dict):
+            continue
+        name = tree.get("m_Name")
+        entries = tree.get("m_Entries")
+        if not isinstance(name, str) or not name.endswith(" Shared Data"):
+            continue
+        if not isinstance(entries, list):
+            continue
+        table_base = name.removesuffix(" Shared Data")
+        mapping: dict[str, int] = {}
+        for row in entries:
+            if not isinstance(row, dict):
+                continue
+            key = row.get("m_Key")
+            entry_id = row.get("m_Id")
+            if isinstance(key, str) and isinstance(entry_id, int):
+                mapping[key.strip().upper()] = entry_id
+        if mapping:
+            key_maps[table_base] = mapping
+    return key_maps
+
+
+def _resolve_localized_links(
+    text: str,
+    locale: str,
+    tables: dict[str, dict[int, str]],
+    key_maps: dict[str, dict[str, int]],
+    depth: int = 0,
+) -> str:
+    """Substitutes `{link.Table.KEY}` with the text it points at.
+
+    Without this, 74 quest names strip down to husks like `":  1"`, because everything
+    that carries meaning sits inside the placeholders - the real name is
+    `{link.Quests.…_NAME}: {link.UI_Common.UI_COMMON_PART} 2`, "Life is a Shooting Range:
+    Part 2". Depth is capped because a link may contain another one.
+    """
+    if depth >= 4:
+        return text
+
+    def substitute(match: re.Match) -> str:
+        table_base, key = match.group(1), match.group(2)
+        entry_id = (key_maps.get(table_base) or {}).get(key.strip().upper())
+        if entry_id is None:
+            return ""
+        for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
+            value = (tables.get(table_name) or {}).get(entry_id)
+            if isinstance(value, str) and value.strip():
+                return _resolve_localized_links(value, locale, tables, key_maps, depth + 1)
+        return ""
+
+    return _LOCALIZED_LINK.sub(substitute, text)
+
+
+def _clean_localized(
+    text: Any,
+    locale: str = "en",
+    tables: dict[str, dict[int, str]] | None = None,
+    key_maps: dict[str, dict[str, int]] | None = None,
+) -> str | None:
+    """A localized string with links resolved and TextMeshPro markup removed.
+
+    Anything that still has no two consecutive letters afterwards is reported as unusable
+    rather than shown - the caller then falls back to the developers' own alias, which is
+    always there.
+    """
+    if not isinstance(text, str):
+        return None
+    cleaned = text
+    if tables is not None and key_maps is not None:
+        cleaned = _resolve_localized_links(cleaned, locale, tables, key_maps)
+    cleaned = _LOCALIZED_MARKUP.sub("", cleaned)
+    cleaned = _LOCALIZED_PLACEHOLDER.sub("", cleaned)
+    cleaned = cleaned.replace("\r", " ").replace("\n", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # A resolved link that came back empty leaves the punctuation that joined it, e.g.
+    # a leading ": ".
+    cleaned = cleaned.strip(" :-–—,;.")
+    if not re.search(r"[^\W\d_]{2}", cleaned):
+        return None
+    return cleaned
+
+
+def _extract_quests_meta(
+    repo_env: Any,
+    locale: str,
+    tables: dict[str, dict[int, str]],
+    key_maps: dict[str, dict[str, int]],
+) -> dict[str, dict[str, Any]]:
+    """Every quest the game ships, keyed by its id.
+
+    A save only ever names the quests it has met, so the count of what exists cannot come
+    from a save at all - the same reason the item maxima are read from here. 302 templates
+    against 179 ids in a real save is what makes "never seen" answerable.
+
+    A name reference names its own table, `Quests` or `DailyQuests`, so the lookup follows
+    the reference rather than guessing.
+    """
+    quests_text = None
+    for obj in repo_env.objects:
+        if obj.type.name != "TextAsset":
+            continue
+        try:
+            tree = obj.read_typetree()
+        except Exception:
+            continue
+        if isinstance(tree, dict) and tree.get("m_Name") == "quests":
+            script = tree.get("m_Script")
+            if isinstance(script, str) and script.strip():
+                quests_text = script
+                break
+
+    if not quests_text:
+        return {}
+
+    try:
+        quests_json = json.loads(quests_text)
+    except Exception:
+        return {}
+    if not isinstance(quests_json, list):
+        return {}
+
+    def resolve(reference: Any) -> str | None:
+        if not isinstance(reference, dict):
+            return None
+        table_base = reference.get("TableReference")
+        entry_id = reference.get("TableEntryReference")
+        if not isinstance(table_base, str) or not isinstance(entry_id, int):
+            return None
+        for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
+            raw = (tables.get(table_name) or {}).get(entry_id)
+            if isinstance(raw, str) and raw.strip():
+                return _clean_localized(raw, locale, tables, key_maps)
+        return None
+
+    meta: dict[str, dict[str, Any]] = {}
+    for quest in quests_json:
+        if not isinstance(quest, dict):
+            continue
+        quest_id = quest.get("Id")
+        if not isinstance(quest_id, str) or not quest_id.strip():
+            continue
+
+        alias = str(quest.get("Alias") or "").strip()
+        # The developers' own folders: MISSIONS, DAILY, OTHER, _OBSOLETE and a few one-offs.
+        # 87 quests have no resolvable name, so the alias is also the fallback label.
+        group = alias.split("/", 1)[0] if alias else ""
+
+        display = quest.get("DisplayInfo") if isinstance(quest.get("DisplayInfo"), dict) else {}
+        availability = (
+            quest.get("AvailabilityInfo")
+            if isinstance(quest.get("AvailabilityInfo"), dict)
+            else {}
+        )
+        unlock = (
+            availability.get("UnlockRequirement")
+            if isinstance(availability.get("UnlockRequirement"), dict)
+            else {}
+        )
+
+        required = [
+            str(value).strip().lower()
+            for value in (unlock.get("_completedQuestIds") or [])
+            if isinstance(value, str) and value.strip()
+        ]
+
+        sender = quest.get("LetterSender") if isinstance(quest.get("LetterSender"), dict) else {}
+        npc_id = sender.get("NpcBioId")
+
+        meta[quest_id.strip().lower()] = {
+            "alias": alias,
+            "group": group,
+            "name": resolve(quest.get("LocalizedName")),
+            "description": resolve(quest.get("LocalizedDescription")),
+            # Two different flags, and they do not overlap: `HideInOrdersList` keeps a quest
+            # out of the in-game list, `IsShadowQuest` is the game's own word for one that
+            # runs without announcing itself.
+            "hidden": bool(display.get("HideInOrdersList")),
+            "shadow": bool(availability.get("IsShadowQuest")),
+            "tutorial": bool(availability.get("IsTutorialQuest")),
+            "sender_npc_id": npc_id.strip().lower() if isinstance(npc_id, str) else None,
+            "requires_quest_ids": required,
+            "min_account_level": unlock.get("_minAccountLevel"),
+            "max_account_level": unlock.get("_maxAccountLevel"),
+            "rewards": _quest_rewards(quest),
+        }
+
+    return meta
+
+
+def _quest_rewards(quest: dict[str, Any]) -> dict[str, Any]:
+    """XP and item templates a quest pays out.
+
+    Rewards sit in two places: a flat `Rewards` list and `CompletionTypeToReward`, which
+    splits them by how the quest was finished. Both are walked, and the entries are told
+    apart by the fields they carry rather than by their numeric `$t`, which a game update
+    renumbers.
+    """
+    experience = 0
+    items: list[dict[str, Any]] = []
+
+    def take(reward_list: Any) -> None:
+        nonlocal experience
+        if not isinstance(reward_list, list):
+            return
+        for reward in reward_list:
+            if not isinstance(reward, dict):
+                continue
+            points = reward.get("ExperiencePoints")
+            if isinstance(points, (int, float)) and not isinstance(points, bool):
+                experience += int(points)
+            for entry in reward.get("ItemRewards") or []:
+                if not isinstance(entry, dict):
+                    continue
+                template_id = entry.get("ItemTemplateId")
+                count = entry.get("Count")
+                if isinstance(template_id, str) and template_id.strip():
+                    items.append({
+                        "template_id": template_id.strip().lower(),
+                        "count": int(count) if isinstance(count, (int, float)) else 1,
+                    })
+
+    take(quest.get("Rewards"))
+    by_completion = quest.get("CompletionTypeToReward")
+    if isinstance(by_completion, dict):
+        for outcome in by_completion.values():
+            if isinstance(outcome, dict):
+                take(outcome.get("Rewards"))
+
+    return {"xp": experience, "items": items}
+
+
+def _read_repo_text_asset(repo_env: Any, name: str) -> Any:
+    """The parsed JSON of one named TextAsset in the repository bundle, or None."""
+    for obj in repo_env.objects:
+        if obj.type.name != "TextAsset":
+            continue
+        try:
+            tree = obj.read_typetree()
+        except Exception:
+            continue
+        if not isinstance(tree, dict) or tree.get("m_Name") != name:
+            continue
+        script = tree.get("m_Script")
+        if not isinstance(script, str) or not script.strip():
+            return None
+        try:
+            return json.loads(script)
+        except Exception:
+            return None
+    return None
+
+
+def _recycler_foundation_id(repo_env: Any) -> str | None:
+    """Id of the Recycler shelter module, found by its `Alias` rather than by a hardcoded GUID.
+
+    The alias is the developers' own name for the foundation and is stable across updates in
+    a way a GUID in this file would not be checkable against.
+    """
+    foundations = _read_repo_text_asset(repo_env, "shelter_module_foundations")
+    if not isinstance(foundations, list):
+        return None
+    for entry in foundations:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("Alias") or "").strip().lower() != "recycler":
+            continue
+        found_id = entry.get("Id")
+        if isinstance(found_id, str) and found_id.strip():
+            return normalize_guid(found_id)
+    return None
+
+
+def _extract_craft_meta(repo_env: Any) -> dict[str, Any]:
+    """What an item turns into when recycled, and what it is an ingredient for.
+
+    Recycling is not a separate system in the data: it is `craft_recipes` sitting on the
+    Recycler shelter module. Measured across the 1150 recipes - 976 are on the Recycler, and
+    975 of those take exactly one unit of exactly one item, which is what makes "recycle this
+    item" a well-defined question with a table for an answer.
+
+    The output depends on how far the module is built: `MinLevel` runs 1, 2, 3, 5 and a
+    single item can have up to six recipes, one per stage. They are kept as a list rather
+    than collapsed, because the right one to show depends on the player's own module level.
+
+    `used_in` is the other direction, and covers **all** recipes rather than only the
+    Recycler's: 440 templates are the sole input of something, and knowing what an item feeds
+    into is what stops it being scrapped by mistake.
+    """
+    recipes = _read_repo_text_asset(repo_env, "craft_recipes")
+    if not isinstance(recipes, list):
+        return {"recycler_foundation_id": None, "recycling": {}, "used_in": {}}
+
+    recycler_id = _recycler_foundation_id(repo_env)
+    recycling: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    used_in: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for recipe in recipes:
+        if not isinstance(recipe, dict):
+            continue
+        # The developers' own scratch prefix: 24 recipes named `xyz_template_*` or
+        # `xyzOBSOLETE_*`, carrying placeholder ingredients - one wants 604 rounds of 9x19 to
+        # make 9x19. Listing them promises a recipe nobody can craft, and they were most of
+        # what made 9x19 look like an ingredient in 92 things.
+        #
+        # A tempting alternative is `ShowInModuleScreen`, which is absent on all 24 - the
+        # serializer's usual omission, so absent means false. It is **not** used here because
+        # it is absent on 121 further recipes that have not been examined, and filtering those
+        # out would drop content on a guess. The prefix is narrow and checkable: none of the 24
+        # sit on the Recycler, so recycling is provably untouched by this.
+        if str(recipe.get("EditorName") or "").lower().startswith("xyz"):
+            continue
+        inputs = recipe.get("Inputs")
+        outputs = recipe.get("Outputs")
+        if not isinstance(inputs, list) or not isinstance(outputs, list) or not inputs:
+            continue
+
+        module = (
+            recipe.get("MainBuiltLeveledShelterModule")
+            if isinstance(recipe.get("MainBuiltLeveledShelterModule"), dict)
+            else {}
+        )
+        foundation = normalize_guid(str(module.get("ShelterModuleFoundationId") or ""))
+        min_level = module.get("MinLevel")
+        duration = recipe.get("CraftDuration")
+
+        def parts(entries: Any) -> list[dict[str, Any]]:
+            """One entry per template, with the counts summed.
+
+            Some recipes express a quantity by **repeating the entry** rather than by setting
+            `Count`: `xyzOBSOLETE_ServoCure+` lists 9x19 four times at Count 1. Taking the
+            list as-is produced four identical rows, which turned 26 real uses of 9x19 into 92
+            duplicates in the UI. 20 of the 1150 recipes do this; none of them are the
+            Recycler's, so recycling is unaffected either way - verified by counting both
+            rules against the bundle: 975 recipes qualify under each.
+            """
+            merged: dict[str, int] = {}
+            for entry in entries if isinstance(entries, list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                template_id = entry.get("ItemTemplateId")
+                if not isinstance(template_id, str) or not template_id.strip():
+                    continue
+                count = entry.get("Count")
+                key = normalize_guid(template_id)
+                merged[key] = merged.get(key, 0) + (
+                    int(count) if isinstance(count, (int, float)) else 1
+                )
+            return [{"template_id": key, "count": value} for key, value in merged.items()]
+
+        input_parts = parts(inputs)
+        output_parts = parts(outputs)
+        if not input_parts or not output_parts:
+            continue
+
+        name = str(recipe.get("EditorName") or "").strip()
+
+        # Only a single-input recipe on the Recycler answers "what do I get for this item".
+        # A multi-input one is a craft that happens to consume it, and belongs in `used_in`.
+        is_recycling = (
+            recycler_id is not None
+            and foundation == recycler_id
+            and len(input_parts) == 1
+            and input_parts[0]["count"] == 1
+        )
+        if is_recycling:
+            recycling[input_parts[0]["template_id"]].append({
+                "min_level": int(min_level) if isinstance(min_level, int) else 1,
+                "duration_seconds": (
+                    int(duration) if isinstance(duration, (int, float)) else None
+                ),
+                "outputs": output_parts,
+            })
+            # Deliberately not also recorded as a use. It is the same recipe shown twice, and
+            # 976 of the 1150 recipes are the Recycler's - listing them in both directions
+            # doubled the report for nothing.
+            continue
+
+        # `makes` is the template of the **first** output, and it is here because the recipe's
+        # own EditorName is often an internal identifier: 230 of 659 read like
+        # "Head_01_Model_05" rather than like an item. Resolved through the catalog it becomes
+        # the item's real name, and one id per row costs about 33 KB. The full output list is
+        # still left out - that is what cost a megabyte - and `name` stays as the fallback for
+        # rows whose output has no resolvable name.
+        for part in input_parts:
+            used_in[part["template_id"]].append({
+                "name": name,
+                "count": part["count"],
+                "makes": output_parts[0]["template_id"],
+            })
+
+    for rows in recycling.values():
+        rows.sort(key=lambda row: row["min_level"])
+
+    return {
+        "recycler_foundation_id": recycler_id,
+        "recycling": dict(recycling),
+        "used_in": dict(used_in),
+    }
 
 
 def _build_localization_items_table(localization_env: Any, locale: str) -> tuple[str | None, dict[int, str]]:
@@ -480,6 +1039,15 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         locale=locale,
         english_fallback="Skills_en",
     )
+    # Which quest table the run actually used. Quests ship in en, ja and ru only, so a
+    # German UI shows the English names - exactly as it already does for items. The tables
+    # themselves are read wholesale further down, because a quest name links into others.
+    quests_table_name, _quests_table = _build_localization_table(
+        localization_env=localization_env,
+        table_prefix="Quests_",
+        locale=locale,
+        english_fallback="Quests_en",
+    )
 
     repo_env = UnityPy.load(str(repo_bundle))
     item_templates_text = None
@@ -512,9 +1080,17 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         iter(sorted(bundles_dir.glob("localization-assets-shared_assets_all*.bundle"))),
         None,
     )
-    if shared_bundle and item_categories_table:
+    # Loaded once and used twice: the category labels below, and the link resolution the
+    # quest names need.
+    shared_env = None
+    if shared_bundle:
         try:
             shared_env = UnityPy.load(str(shared_bundle))
+        except Exception:
+            shared_env = None
+
+    if shared_env is not None and item_categories_table:
+        try:
             for obj in shared_env.objects:
                 if obj.type.name != "MonoBehaviour":
                     continue
@@ -598,11 +1174,14 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
             "width": width,
             "height": height,
             "max_durability": _extract_max_durability(entry),
+            "has_wear_condition": _extract_has_wear_condition(entry),
             "stack_capacity": _extract_stack_capacity(entry),
             "container": _extract_container(entry),
             "max_width": max_width,
             "max_height": max_height,
             "is_resizable": is_resizable,
+            "price": _extract_price(entry),
+            "mass": _extract_mass(entry),
         }
 
         resolved_name = None
@@ -806,6 +1385,11 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         }
         break
 
+    all_tables = _build_all_localization_tables(localization_env)
+    shared_key_maps = _build_shared_key_maps(shared_env) if shared_env is not None else {}
+    quests_meta = _extract_quests_meta(repo_env, locale, all_tables, shared_key_maps)
+    craft_meta = _extract_craft_meta(repo_env)
+
     return {
         "enabled": True,
         "reason": None,
@@ -832,6 +1416,9 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         "shops_meta": shops_meta,
         "max_account_level": max_account_level,
         "level_progress": level_progress,
+        "quests_table": quests_table_name,
+        "quests_meta": quests_meta,
+        "craft_meta": craft_meta,
     }
 
 
@@ -959,7 +1546,10 @@ def build_final_mapping(
             "width": repo_meta.get(tid, {}).get("width"),
             "height": repo_meta.get(tid, {}).get("height"),
             "max_durability": repo_meta.get(tid, {}).get("max_durability"),
+            "has_wear_condition": repo_meta.get(tid, {}).get("has_wear_condition"),
             "stack_capacity": repo_meta.get(tid, {}).get("stack_capacity"),
+            "price": repo_meta.get(tid, {}).get("price"),
+            "mass": repo_meta.get(tid, {}).get("mass"),
             # The storage this item provides, for placing something inside it. `width`/
             # `height` above are the item's own footprint and a different thing entirely.
             "container": repo_meta.get(tid, {}).get("container"),
@@ -1007,7 +1597,10 @@ def build_item_catalog(mapping: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "width": row.get("width"),
                 "height": row.get("height"),
                 "max_durability": row.get("max_durability"),
+                "has_wear_condition": row.get("has_wear_condition"),
                 "stack_capacity": row.get("stack_capacity"),
+                "price": row.get("price"),
+                "mass": row.get("mass"),
                 "container": row.get("container"),
                 "alias": row.get("alias"),
                 "max_width": row.get("max_width"),
@@ -1089,6 +1682,14 @@ def run_extraction(
             "subcategory_label_count": repository_names.get("subcategory_label_count"),
             "unresolved_link_count": repository_names.get("unresolved_link_count"),
             "fallback_alias_count": repository_names.get("fallback_alias_count"),
+            "quests_table": repository_names.get("quests_table"),
+            "quests_count": len(repository_names.get("quests_meta") or {}),
+            "recycler_foundation_id": (
+                repository_names.get("craft_meta") or {}).get("recycler_foundation_id"),
+            "recyclable_count": len(
+                (repository_names.get("craft_meta") or {}).get("recycling") or {}),
+            "used_in_count": len(
+                (repository_names.get("craft_meta") or {}).get("used_in") or {}),
         },
         "summary": {
             "template_ids_in_save": len(save_usage["template_usage_count"]),
@@ -1110,6 +1711,8 @@ def run_extraction(
         "shops_meta": repository_names.get("shops_meta", {}),
         "max_account_level": repository_names.get("max_account_level"),
         "level_progress": repository_names.get("level_progress", {}),
+        "quests_meta": repository_names.get("quests_meta", {}),
+        "craft_meta": repository_names.get("craft_meta", {}),
         "bundle_slug_hints": bundle_hints["bundle_slug_hints"],
     }
 
@@ -1133,15 +1736,19 @@ def run_extraction(
 
     catalog_csv_path = out_dir / "item_catalog.csv"
     with catalog_csv_path.open("w", encoding="utf-8") as f:
+        # No code reads this file - the app reads the JSON report. It exists to be opened in a
+        # spreadsheet, which is why price and mass are in it: looking up what something is
+        # worth is the reason someone opens a catalog. An empty cell means the game records no
+        # value, which is not the same as zero.
         f.write(
-            "category_id,category_label,subcategory_id,subcategory_label,name,template_id,width,height,name_source,confidence\n"
+            "category_id,category_label,subcategory_id,subcategory_label,name,template_id,width,height,price,mass,name_source,confidence\n"
         )
         for row in item_catalog:
             name = (row.get("name") or "").replace('"', '""')
             category_label = (row.get("category_label") or "").replace('"', '""')
             subcategory_label = (row.get("subcategory_label") or "").replace('"', '""')
             f.write(
-                f"{row.get('category_id') if row.get('category_id') is not None else ''},\"{category_label}\",{row.get('subcategory_id') if row.get('subcategory_id') is not None else ''},\"{subcategory_label}\",\"{name}\",{row.get('template_id') or ''},{row.get('width') if row.get('width') is not None else ''},{row.get('height') if row.get('height') is not None else ''},{row.get('name_source') or ''},{row.get('confidence') or ''}\n"
+                f"{row.get('category_id') if row.get('category_id') is not None else ''},\"{category_label}\",{row.get('subcategory_id') if row.get('subcategory_id') is not None else ''},\"{subcategory_label}\",\"{name}\",{row.get('template_id') or ''},{row.get('width') if row.get('width') is not None else ''},{row.get('height') if row.get('height') is not None else ''},{row.get('price') if row.get('price') is not None else ''},{row.get('mass') if row.get('mass') is not None else ''},{row.get('name_source') or ''},{row.get('confidence') or ''}\n"
             )
 
     return report
