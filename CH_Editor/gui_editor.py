@@ -13,6 +13,8 @@ from core_utils import (
     SaveDataManager,
     container_cells,
     find_placement,
+    list_backups,
+    restore_backup,
 )
 from main_editor import build_entries, describe_entry, repair_item_logic
 
@@ -101,6 +103,13 @@ def save_config_lang(lang: str) -> None:
         pass
 
 
+def _trim_float(value: float) -> str:
+    """`5` rather than `5.0`, but `3.8` kept. Condition values are stored as floats and
+    most are whole numbers; the trailing zero reads like precision that is not there."""
+    text = f"{float(value):.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def load_config_backup_keep() -> int:
     path = get_config_path()
     if path.exists():
@@ -149,7 +158,7 @@ TRANSLATIONS = {
         "btn_delete_mail": "Delete selected letter",
         "lbl_category": "Category:",
         "lbl_subcategory": "SubCategory:",
-        "ctx_add_to_inv": "Add to Inventory",
+        "ctx_add_to_inv": "Add to Inventory...",
         "lbl_warn_title": "☠ WARNING: HACKERMAN'S DANGER ZONE ☠",
         "lbl_warn_desc": "Manipulating character stats, skills, or traders can completely corrupt (brick) your save file!\nUse these features at your own risk.",
         "lf_profile": " Profile Details ",
@@ -210,6 +219,8 @@ TRANSLATIONS = {
         "col_cat_subcategory": "SubCategory",
         "col_cat_size": "Size",
         "col_cat_stack": "Stack",
+        "col_cat_price": "Value",
+        "col_cat_mass": "Weight",
         "all_categories": "All",
         "scope_equipment": "Character Equipment",
         "scope_tab": "Tab {idx}",
@@ -257,8 +268,6 @@ TRANSLATIONS = {
         "msg_catalog_row_invalid": "Selected catalog row is invalid.",
         "msg_no_template_id": "Selected row has no TemplateId.",
         "msg_add_item_title": "Add item",
-        "msg_add_item_prompt": "How many copies should be added?",
-        "msg_add_stack_prompt": "How many units should be added?\nOne stack holds {capacity}; larger amounts are split into several stacks.",
         "msg_no_inv_tab_found": "No inventory tab found for insertion.",
         "ctx_offer_at_trader": "Offer at Trader...",
         "shop_offer_title": "Offer at trader",
@@ -303,6 +312,116 @@ TRANSLATIONS = {
         "counters_lifetime": "Lifetime",
         "counters_hint": "Read-only: the account's own tally, kept by the game. Nothing here is written back.",
         "counters_empty": "This save carries no counters.",
+        "tab_quests": "Quests",
+        "col_quest_status": "Status",
+        "col_quest_flags": "Flags",
+        "col_quest_sender": "Sender",
+        "col_quest_reward": "Reward",
+        "quest_status_active": "Active",
+        "quest_status_done": "Completed",
+        "quest_status_unseen": "Never seen",
+        "quest_flag_hidden": "not listed",
+        "quest_flag_shadow": "shadow",
+        "quest_group_none": "Ungrouped",
+        "quests_hint": "Read-only. What the game ships against what this save has met. The progress of a running quest is not in the save at all, so it cannot be shown.",
+        "quests_empty": "No quest data. Use Refresh Names from Game to read it from the game files.",
+        "quest_pick": "Pick a quest to see its full text.",
+        "quest_detail_alias": "Internal name",
+        "quest_detail_status": "Status",
+        "quest_detail_task": "Task",
+        "quest_detail_requires": "Needs first",
+        "quest_detail_level": "Account level",
+        "quest_detail_sender": "Sent by",
+        "quest_detail_rewards": "Rewards",
+        "quest_detail_none": "none",
+        "quest_reward_xp": "{xp} XP",
+        "quest_level_range": "{min} to {max}",
+        "quest_counts": "{total} quests in the game, {seen} met, {unseen} never seen",
+        "btn_restore_backup": "Restore backup...",
+        "restore_title": "Restore a backup",
+        "restore_prompt": "Which backup should replace your save?",
+        "restore_hint": "The current save is copied aside first, so this is undoable too. Nothing in the backups folder is deleted.",
+        "restore_col_when": "Taken",
+        "restore_col_label": "Reason",
+        "restore_col_size": "Size",
+        "restore_none": "There are no backups yet. One is written every time you apply changes.",
+        "restore_pending": "You have unsaved changes. Restoring a backup discards them.\n\nContinue?",
+        "restore_confirm": "Replace your save with this backup?\n\n{name}\n\nThe current save is copied to the backups folder first.",
+        "btn_restore": "Restore",
+        "status_restored": "Restored {name} (current save kept as {backup})",
+        "msg_restore_failed": "Could not restore the backup:\n{exc}",
+        "ctx_repair_custom": "Repair Item to...",
+        "ctx_duplicate_custom": "Duplicate Item...",
+        "custom_title_repair": "Repair to a value",
+        "custom_repair_prompt": "{name} carries {field}. Set it to:",
+        "custom_repair_children": "Apply to attached items too",
+        "custom_repair_none": "This item carries no condition data, and neither does anything attached to it. The game only stores those fields once an item stops being pristine, so there is nothing to set.",
+        "custom_repair_field_cond": "condition (0 to {max})",
+        "custom_repair_field_dur": "charges (0 to {max})",
+        "custom_title_duplicate": "Duplicate",
+        "custom_count": "How many copies:",
+        "custom_units": "Units per stack (max {capacity}):",
+        "custom_target": "Where it goes:",
+        "custom_condition": "Starting {field}:",
+        "custom_condition_hint": "At the maximum the item is spawned pristine, which is how the game stores an untouched item - it carries no condition field at all. A lower value spawns it worn.",
+        "custom_nothing_else": "This item does not stack and carries no condition, so there is nothing else to set for it.",
+        "custom_value_range": "Value must be between {low} and {high}.",
+        "ctx_move": "Move Item...",
+        "move_title": "Move item",
+        "move_prompt": "Move {name} to:",
+        "move_hint": "Attachments come along, and an equipped item leaves its slot empty. "
+                     "The cell it vacates stays free rather than being filled by its "
+                     "neighbours.",
+        "move_structural": "Warehouse tabs and the storage roots are part of the save's "
+                           "layout rather than items, so they cannot be moved.",
+        "move_no_space": "No free space in {target} for this item ({width}x{height}).",
+        "move_failed": "The item could not be moved.",
+        "status_moved": "Moved {count} item(s) to {target} (not saved yet)",
+        "ctx_split": "Split Stack...",
+        "split_title": "Split stack",
+        "split_prompt": "Take how many of the {quantity} units:",
+        "split_hint": "The units taken become a second stack; the rest stays where it is. "
+                      "Taking all of them would be a move, not a split, so at least one "
+                      "unit has to stay behind.",
+        "split_not_stackable": "This item is not a stack. Only an item that carries a "
+                               "quantity can be split, and this one holds a single unit.",
+        "split_no_space": "No free space in {target} for the second stack.",
+        "status_split": "Split {amount} of {quantity} units off (not saved yet)",
+        "ctx_info": "Item Info",
+        "info_title": "Item info",
+        "info_value": "Value",
+        "info_mass": "Weight",
+        "info_size": "Size",
+        "info_size_max": "{width}x{height}  (max {max_width}x{max_height})",
+        "info_stack": "Stack",
+        "info_stack_units": "up to {capacity} units",
+        "info_wear": "Condition",
+        "info_wear_cond": "wears out, 0 to 4",
+        "info_wear_dur": "{max} charges",
+        "info_none": "-",
+        "info_credits": "{amount} Credits",
+        "info_section_this_one": "This one",
+        "info_where": "Location",
+        "info_where_cell": "cell ({i}, {j})",
+        "info_attachments": "{count} attached",
+        "info_equipped": "equipped",
+        "info_section_recycle": "Recycling",
+        "info_recycle_your_level": "your recycler: level {level}",
+        "info_recycle_no_module": "you have not built a recycler yet",
+        "info_recycle_level": "Level {level}",
+        "info_recycle_none": "Not recyclable. There is no recycler recipe for this item.",
+        "info_recycle_above_you": "Every recipe for this item needs a higher recycler level "
+                                  "than yours.",
+        "info_section_used_in": "Used for",
+        "info_used_in_none": "Not an ingredient in any recipe.",
+        "info_used_in_row": "{name}   {count}x",
+        "info_template": "Template",
+        "info_copy": "Copy ID",
+        "info_copied": "Template ID copied.",
+        "info_no_game_data": "No game data for this template. Run Refresh Names from Game.",
+        "info_hours": "{hours} h",
+        "info_minutes": "{minutes} min",
+        "status_repaired_custom": "Set condition on {count} item(s) (not saved yet)",
         "msg_select_search_result": "Select a search result first.",
         "msg_select_letter": "Please select a letter first.",
         "msg_err_resolve_letter": "Could not resolve selected letter index.",
@@ -329,6 +448,7 @@ TRANSLATIONS = {
                                 "where anything without room ends up anyway. Pick this when "
                                 "the containers are full or you want to sort it yourself.",
         "target_tab": "Tab {idx} - {free} of {total} cells free",
+        "info_tab": "Tab {idx}",
         "target_carried": "{name} (carried) - {free} of {total} cells free",
         "target_container": "Container",
         "btn_close": "Close"
@@ -350,7 +470,7 @@ TRANSLATIONS = {
         "btn_delete_mail": "Ausgewählten Brief löschen",
         "lbl_category": "Kategorie:",
         "lbl_subcategory": "Unterkategorie:",
-        "ctx_add_to_inv": "Ins Inventar spawnen",
+        "ctx_add_to_inv": "Zum Inventar hinzufügen...",
         "lbl_warn_title": "☠ WARNUNG: HACKERMANS GEFAHRENZONE ☠",
         "lbl_warn_desc": "Das Manipulieren von Charakterwerten, Skills oder Händlern kann deinen Spielstand komplett zerschießen (bricken)!\nNutze diese Funktionen auf eigene Gefahr.",
         "lf_profile": " Profildetails ",
@@ -411,6 +531,8 @@ TRANSLATIONS = {
         "col_cat_subcategory": "Unterkategorie",
         "col_cat_size": "Größe",
         "col_cat_stack": "Stapel",
+        "col_cat_price": "Wert",
+        "col_cat_mass": "Gewicht",
         "all_categories": "Alle",
         "scope_equipment": "Charakter-Ausrüstung",
         "scope_tab": "Reiter {idx}",
@@ -458,8 +580,6 @@ TRANSLATIONS = {
         "msg_catalog_row_invalid": "Ausgewählte Katalogzeile ist ungültig.",
         "msg_no_template_id": "Ausgewählte Zeile hat keine TemplateId.",
         "msg_add_item_title": "Gegenstand hinzufügen",
-        "msg_add_item_prompt": "Wie viele Kopien sollen hinzugefügt werden?",
-        "msg_add_stack_prompt": "Wie viele Einheiten sollen hinzugefügt werden?\nEin Stapel fasst {capacity}; größere Mengen werden auf mehrere Stapel verteilt.",
         "msg_no_inv_tab_found": "Kein Inventar-Reiter für das Einfügen gefunden.",
         "ctx_offer_at_trader": "Beim Händler anbieten...",
         "shop_offer_title": "Beim Händler anbieten",
@@ -504,6 +624,121 @@ TRANSLATIONS = {
         "counters_lifetime": "Gesamt",
         "counters_hint": "Nur zur Ansicht: die Zähler des Spiels. Hier wird nichts zurückgeschrieben.",
         "counters_empty": "Dieser Spielstand enthält keine Zähler.",
+        "tab_quests": "Quests",
+        "col_quest_status": "Status",
+        "col_quest_flags": "Merkmale",
+        "col_quest_sender": "Absender",
+        "col_quest_reward": "Belohnung",
+        "quest_status_active": "Aktiv",
+        "quest_status_done": "Erledigt",
+        "quest_status_unseen": "Nie gesehen",
+        "quest_flag_hidden": "nicht gelistet",
+        "quest_flag_shadow": "verdeckt",
+        "quest_group_none": "Ohne Gruppe",
+        "quests_hint": "Nur zur Ansicht. Was das Spiel mitbringt, gegen das, was dieser Spielstand kennt. Der Fortschritt einer laufenden Quest steht gar nicht im Spielstand und kann deshalb nicht angezeigt werden.",
+        "quests_empty": "Keine Questdaten. Mit „Refresh Names from Game“ aus den Spieldateien lesen.",
+        "quest_pick": "Wähle eine Quest, um den vollen Text zu sehen.",
+        "quest_detail_alias": "Interner Name",
+        "quest_detail_status": "Status",
+        "quest_detail_task": "Aufgabe",
+        "quest_detail_requires": "Setzt voraus",
+        "quest_detail_level": "Accountlevel",
+        "quest_detail_sender": "Geschickt von",
+        "quest_detail_rewards": "Belohnung",
+        "quest_detail_none": "keine",
+        "quest_reward_xp": "{xp} EP",
+        "quest_level_range": "{min} bis {max}",
+        "quest_counts": "{total} Quests im Spiel, {seen} begegnet, {unseen} nie gesehen",
+        "btn_restore_backup": "Backup zurückspielen...",
+        "restore_title": "Backup zurückspielen",
+        "restore_prompt": "Welches Backup soll deinen Spielstand ersetzen?",
+        "restore_hint": "Der aktuelle Spielstand wird vorher weggesichert, das hier ist also ebenfalls umkehrbar. Im Backup-Ordner wird nichts gelöscht.",
+        "restore_col_when": "Erstellt",
+        "restore_col_label": "Anlass",
+        "restore_col_size": "Größe",
+        "restore_none": "Es gibt noch keine Backups. Eines entsteht bei jedem Übernehmen.",
+        "restore_pending": "Du hast nicht übernommene Änderungen. Beim Zurückspielen gehen sie verloren.\n\nFortfahren?",
+        "restore_confirm": "Deinen Spielstand durch dieses Backup ersetzen?\n\n{name}\n\nDer aktuelle Stand wird vorher in den Backup-Ordner kopiert.",
+        "btn_restore": "Zurückspielen",
+        "status_restored": "{name} zurückgespielt (bisheriger Stand als {backup} gesichert)",
+        "msg_restore_failed": "Backup konnte nicht zurückgespielt werden:\n{exc}",
+        "ctx_repair_custom": "Gegenstand setzen auf...",
+        "ctx_duplicate_custom": "Gegenstand duplizieren...",
+        "custom_title_repair": "Auf einen Wert setzen",
+        "custom_repair_prompt": "{name} trägt {field}. Setzen auf:",
+        "custom_repair_children": "Auch auf Anbauteile anwenden",
+        "custom_repair_none": "Dieser Gegenstand trägt keine Zustandsdaten, und seine Anbauteile auch nicht. Das Spiel legt diese Felder erst an, wenn ein Gegenstand nicht mehr makellos ist — es gibt hier also nichts zu setzen.",
+        "custom_repair_field_cond": "Zustand (0 bis {max})",
+        "custom_repair_field_dur": "Ladungen (0 bis {max})",
+        "custom_title_duplicate": "Duplizieren",
+        "custom_count": "Wie viele Kopien:",
+        "custom_units": "Stück pro Stapel (max. {capacity}):",
+        "custom_target": "Wohin:",
+        "custom_condition": "Anfangs-{field}:",
+        "custom_condition_hint": "Beim Maximum entsteht der Gegenstand makellos - so legt das Spiel einen unberührten Gegenstand ab, ganz ohne Zustandsfeld. Ein kleinerer Wert erzeugt ihn abgenutzt.",
+        "custom_nothing_else": "Dieser Gegenstand stapelt nicht und trägt keinen Zustand - mehr gibt es hier nicht einzustellen.",
+        "custom_value_range": "Der Wert muss zwischen {low} und {high} liegen.",
+        "ctx_move": "Gegenstand verschieben...",
+        "move_title": "Gegenstand verschieben",
+        "move_prompt": "{name} verschieben nach:",
+        "move_hint": "Anbauteile kommen mit, und ein ausgerüsteter Gegenstand lässt seinen "
+                     "Platz leer zurück. Die freigewordene Zelle bleibt frei — es rückt "
+                     "nichts nach.",
+        "move_structural": "Lagerreiter und die Wurzelbehälter gehören zum Aufbau des "
+                           "Spielstands und sind keine Gegenstände. Sie lassen sich nicht "
+                           "verschieben.",
+        "move_no_space": "In {target} ist kein Platz für diesen Gegenstand "
+                         "({width}x{height}).",
+        "move_failed": "Der Gegenstand konnte nicht verschoben werden.",
+        "status_moved": "{count} Gegenstand/Gegenstände nach {target} verschoben (noch nicht gespeichert)",
+        "ctx_split": "Stapel teilen...",
+        "split_title": "Stapel teilen",
+        "split_prompt": "Wie viele der {quantity} Stück abtrennen:",
+        "split_hint": "Die abgetrennten Stück werden ein zweiter Stapel, der Rest bleibt "
+                      "liegen. Alles abzutrennen wäre ein Verschieben und kein Teilen — "
+                      "mindestens ein Stück muss zurückbleiben.",
+        "split_not_stackable": "Dieser Gegenstand ist kein Stapel. Teilen lässt sich nur, "
+                               "was eine Stückzahl trägt, und dieser hier ist ein einzelnes "
+                               "Stück.",
+        "split_no_space": "In {target} ist kein Platz für den zweiten Stapel.",
+        "status_split": "{amount} von {quantity} Stück abgetrennt (noch nicht gespeichert)",
+        "ctx_info": "Info zum Gegenstand",
+        "info_title": "Gegenstandsinfo",
+        "info_value": "Wert",
+        "info_mass": "Gewicht",
+        "info_size": "Größe",
+        "info_size_max": "{width}x{height}  (max. {max_width}x{max_height})",
+        "info_stack": "Stapel",
+        "info_stack_units": "bis {capacity} Stück",
+        "info_wear": "Zustand",
+        "info_wear_cond": "nutzt sich ab, 0 bis 4",
+        "info_wear_dur": "{max} Ladungen",
+        "info_none": "-",
+        "info_credits": "{amount} Credits",
+        "info_section_this_one": "Dieses Exemplar",
+        "info_where": "Ort",
+        "info_where_cell": "Zelle ({i}, {j})",
+        "info_attachments": "{count} Anbauteile",
+        "info_equipped": "ausgerüstet",
+        "info_section_recycle": "Recyceln",
+        "info_recycle_your_level": "dein Recycler: Stufe {level}",
+        "info_recycle_no_module": "du hast noch keinen Recycler gebaut",
+        "info_recycle_level": "Stufe {level}",
+        "info_recycle_none": "Nicht recycelbar. Für diesen Gegenstand gibt es kein "
+                             "Recycler-Rezept.",
+        "info_recycle_above_you": "Alle Rezepte für diesen Gegenstand brauchen einen höher "
+                                  "ausgebauten Recycler als deinen.",
+        "info_section_used_in": "Wird gebraucht für",
+        "info_used_in_none": "Ist in keinem Rezept Zutat.",
+        "info_used_in_row": "{name}   {count}x",
+        "info_template": "Vorlage",
+        "info_copy": "ID kopieren",
+        "info_copied": "Vorlagen-ID kopiert.",
+        "info_no_game_data": "Keine Spieldaten zu dieser Vorlage. Führe Spielnamen "
+                             "aktualisieren aus.",
+        "info_hours": "{hours} Std.",
+        "info_minutes": "{minutes} Min.",
+        "status_repaired_custom": "Zustand an {count} Gegenstand/Gegenständen gesetzt (noch nicht gespeichert)",
         "msg_select_search_result": "Bitte wählen Sie zuerst ein Suchergebnis aus.",
         "msg_select_letter": "Bitte wählen Sie zuerst einen Brief aus.",
         "msg_err_resolve_letter": "Index des ausgewählten Briefs konnte nicht aufgelöst werden.",
@@ -533,6 +768,7 @@ TRANSLATIONS = {
                                 "findet. Nimm das, wenn die Behälter voll sind oder du selbst "
                                 "einsortieren willst.",
         "target_tab": "Reiter {idx} - {free} von {total} Feldern frei",
+        "info_tab": "Reiter {idx}",
         "target_carried": "{name} (am Körper) - {free} von {total} Feldern frei",
         "target_container": "Behälter",
         "btn_close": "Schließen"
@@ -554,7 +790,7 @@ TRANSLATIONS = {
         "btn_delete_mail": "Удалить выбранное письмо",
         "lbl_category": "Категория:",
         "lbl_subcategory": "Подкатегория:",
-        "ctx_add_to_inv": "Добавить в инвентарь",
+        "ctx_add_to_inv": "Добавить в инвентарь...",
         "lbl_warn_title": "☠ ВНИМАНИЕ: ОПАСНАЯ ЗОНА ХАКЕРА ☠",
         "lbl_warn_desc": "Редактирование характеристик персонажа, навыков или торговцев может полностью повредить (сломать) ваше сохранение!\nИспользуйте эти функции на свой страх и риск.",
         "lf_profile": " Детали профиля ",
@@ -615,6 +851,8 @@ TRANSLATIONS = {
         "col_cat_subcategory": "Подкатегория",
         "col_cat_size": "Размер",
         "col_cat_stack": "Стак",
+        "col_cat_price": "Цена",
+        "col_cat_mass": "Вес",
         "all_categories": "Все",
         "scope_equipment": "Снаряжение персонажа",
         "scope_tab": "Вкладка {idx}",
@@ -662,8 +900,6 @@ TRANSLATIONS = {
         "msg_catalog_row_invalid": "Некорректная строка в каталоге.",
         "msg_no_template_id": "У выбранной строки нет TemplateId.",
         "msg_add_item_title": "Добавить предмет",
-        "msg_add_item_prompt": "Сколько копий добавить?",
-        "msg_add_stack_prompt": "Сколько единиц добавить?\nВ один стак входит {capacity}; большее количество будет разбито на несколько стаков.",
         "msg_no_inv_tab_found": "Вкладка инвентаря для вставки не найдена.",
         "ctx_offer_at_trader": "Предложить у торговца...",
         "shop_offer_title": "Предложить у торговца",
@@ -708,6 +944,118 @@ TRANSLATIONS = {
         "counters_lifetime": "Всего",
         "counters_hint": "Только для просмотра: счётчики игры. Здесь ничего не записывается.",
         "counters_empty": "В этом сохранении нет счётчиков.",
+        "tab_quests": "Квесты",
+        "col_quest_status": "Статус",
+        "col_quest_flags": "Признаки",
+        "col_quest_sender": "Отправитель",
+        "col_quest_reward": "Награда",
+        "quest_status_active": "Активные",
+        "quest_status_done": "Завершённые",
+        "quest_status_unseen": "Ни разу не встречались",
+        "quest_flag_hidden": "нет в списке",
+        "quest_flag_shadow": "скрытый",
+        "quest_group_none": "Без группы",
+        "quests_hint": "Только для просмотра. Что есть в игре против того, что встречалось в этом сохранении. Прогресса активного квеста в сохранении нет вовсе, поэтому показать его нельзя.",
+        "quests_empty": "Нет данных о квестах. Нажмите Refresh Names from Game.",
+        "quest_pick": "Выберите квест, чтобы увидеть полный текст.",
+        "quest_detail_alias": "Внутреннее имя",
+        "quest_detail_status": "Статус",
+        "quest_detail_task": "Задание",
+        "quest_detail_requires": "Требует",
+        "quest_detail_level": "Уровень аккаунта",
+        "quest_detail_sender": "Отправитель",
+        "quest_detail_rewards": "Награда",
+        "quest_detail_none": "нет",
+        "quest_reward_xp": "{xp} опыта",
+        "quest_level_range": "от {min} до {max}",
+        "quest_counts": "в игре квестов: {total}, встречено: {seen}, ни разу: {unseen}",
+        "btn_restore_backup": "Восстановить копию...",
+        "restore_title": "Восстановление из копии",
+        "restore_prompt": "Какая копия должна заменить сохранение?",
+        "restore_hint": "Текущее сохранение сначала копируется, так что действие обратимо. В папке копий ничего не удаляется.",
+        "restore_col_when": "Создана",
+        "restore_col_label": "Повод",
+        "restore_col_size": "Размер",
+        "restore_none": "Копий пока нет. Они создаются при каждом применении изменений.",
+        "restore_pending": "Есть несохранённые изменения. При восстановлении они пропадут.\n\nПродолжить?",
+        "restore_confirm": "Заменить сохранение этой копией?\n\n{name}\n\nТекущее сохранение сначала попадёт в папку копий.",
+        "btn_restore": "Восстановить",
+        "status_restored": "Восстановлено {name} (прежнее сохранено как {backup})",
+        "msg_restore_failed": "Не удалось восстановить копию:\n{exc}",
+        "ctx_repair_custom": "Задать состояние...",
+        "ctx_duplicate_custom": "Дублировать предмет...",
+        "custom_title_repair": "Задать значение",
+        "custom_repair_prompt": "{name} имеет {field}. Задать:",
+        "custom_repair_children": "Применить и к присоединённым предметам",
+        "custom_repair_none": "У этого предмета нет данных о состоянии, как и у его навесок. Игра создаёт эти поля, лишь когда предмет перестаёт быть идеальным.",
+        "custom_repair_field_cond": "состояние (от 0 до {max})",
+        "custom_repair_field_dur": "заряды (от 0 до {max})",
+        "custom_title_duplicate": "Дублирование",
+        "custom_count": "Сколько копий:",
+        "custom_units": "Штук в стаке (макс. {capacity}):",
+        "custom_target": "Куда:",
+        "custom_condition": "Начальное значение — {field}:",
+        "custom_condition_hint": "При максимуме предмет создаётся идеальным: именно так игра хранит нетронутый предмет — без поля состояния вообще. Меньшее значение даёт потрёпанный предмет.",
+        "custom_nothing_else": "Этот предмет не стакается и не имеет состояния — больше здесь нечего настраивать.",
+        "custom_value_range": "Значение должно быть от {low} до {high}.",
+        "ctx_move": "Переместить предмет...",
+        "move_title": "Перемещение предмета",
+        "move_prompt": "Переместить {name} в:",
+        "move_hint": "Навески перемещаются вместе с предметом, а надетый предмет освобождает "
+                     "свой слот. Освободившаяся ячейка так и остаётся пустой — соседи не "
+                     "сдвигаются.",
+        "move_structural": "Вкладки склада и корневые контейнеры — часть структуры "
+                           "сохранения, а не предметы, поэтому переместить их нельзя.",
+        "move_no_space": "В {target} нет места для этого предмета ({width}x{height}).",
+        "move_failed": "Не удалось переместить предмет.",
+        "status_moved": "Перемещено предметов: {count} → {target} (ещё не сохранено)",
+        "ctx_split": "Разделить стак...",
+        "split_title": "Разделение стака",
+        "split_prompt": "Сколько штук отделить из {quantity}:",
+        "split_hint": "Отделённые штуки станут вторым стаком, остальное останется на месте. "
+                      "Отделить всё — это перемещение, а не разделение, поэтому хотя бы одна "
+                      "штука должна остаться.",
+        "split_not_stackable": "Этот предмет не стак. Разделить можно только то, что несёт "
+                               "количество, а здесь всего одна штука.",
+        "split_no_space": "В {target} нет места для второго стака.",
+        "status_split": "Отделено {amount} из {quantity} шт. (ещё не сохранено)",
+        "ctx_info": "Информация о предмете",
+        "info_title": "Информация о предмете",
+        "info_value": "Цена",
+        "info_mass": "Вес",
+        "info_size": "Размер",
+        "info_size_max": "{width}x{height}  (макс. {max_width}x{max_height})",
+        "info_stack": "Стак",
+        "info_stack_units": "до {capacity} шт.",
+        "info_wear": "Состояние",
+        "info_wear_cond": "изнашивается, от 0 до 4",
+        "info_wear_dur": "зарядов: {max}",
+        "info_none": "-",
+        "info_credits": "{amount} кредитов",
+        "info_section_this_one": "Этот экземпляр",
+        "info_where": "Где",
+        "info_where_cell": "ячейка ({i}, {j})",
+        "info_attachments": "навесок: {count}",
+        "info_equipped": "надет",
+        "info_section_recycle": "Переработка",
+        "info_recycle_your_level": "ваш переработчик: уровень {level}",
+        "info_recycle_no_module": "переработчик ещё не построен",
+        "info_recycle_level": "Уровень {level}",
+        "info_recycle_none": "Не перерабатывается. Рецепта переработки для этого предмета "
+                             "нет.",
+        "info_recycle_above_you": "Всем рецептам для этого предмета нужен переработчик "
+                                  "выше вашего уровня.",
+        "info_section_used_in": "Используется для",
+        "info_used_in_none": "Не входит ни в один рецепт.",
+        "info_used_in_row": "{name}   {count}x",
+        "info_template": "Шаблон",
+        "info_copy": "Копировать ID",
+        "info_copied": "ID шаблона скопирован.",
+        "info_no_game_data": "Нет игровых данных для этого шаблона. Выполните «Обновить "
+                             "названия из игры».",
+        "info_hours": "{hours} ч",
+        "info_minutes": "{minutes} мин",
+        "status_repaired_custom": "Состояние задано для {count} предметов (ещё не сохранено)",
         "msg_select_search_result": "Сначала выберите результат поиска.",
         "msg_select_letter": "Сначала выберите письмо.",
         "msg_err_resolve_letter": "Не удалось определить индекс выбранного письма.",
@@ -735,6 +1083,7 @@ TRANSLATIONS = {
                                 "попадает всё, чему не хватило места. Выбирайте это, когда "
                                 "контейнеры полны или вы хотите разложить сами.",
         "target_tab": "Вкладка {idx} - свободно {free} из {total} клеток",
+        "info_tab": "Вкладка {idx}",
         "target_carried": "{name} (при себе) - свободно {free} из {total} клеток",
         "target_container": "Контейнер",
         "btn_close": "Закрыть"
@@ -774,6 +1123,15 @@ SKILL_NAMES = {
 # three places. Read them through `_max_level_for_account()`, never directly.
 TRADER_LEVEL_MIN = 1
 TRADER_LEVEL_MAX_FALLBACK = 25
+
+# How many "used for" rows the info window shows at once. Anything beyond scrolls - the list
+# is never cut short, because the templates with the most uses are the crafting staples and
+# they are exactly what someone opens this section to look up.
+INFO_USED_IN_ROWS = 8
+
+# Marks the recycler stage that applies to the player's own module. Named rather than
+# inlined so the tests can look for it without repeating the character.
+INFO_MARKER = "▸ "
 
 # One-click "fill trader balances" without a report. Each shop's own `ShopBalance` from the
 # game data is preferred; this is the flat value the cheat wrote before that existed.
@@ -959,6 +1317,12 @@ class SaveEditorGUI:
 
         # Explanatory text in dialogs: dimmed, on the same background as everything else.
         self.style.configure("Hint.TLabel", background="#1e1e1e", foreground="#9a9a9a")
+        # The item info window's two headings. Bigger and brighter than the body, so the
+        # sections read as sections without needing rules between them.
+        self.style.configure("InfoTitle.TLabel", background="#1e1e1e", foreground="#e8e8e8",
+                             font=("Segoe UI", 13, "bold"))
+        self.style.configure("InfoSection.TLabel", background="#1e1e1e",
+                             foreground="#c8c8c8", font=("Segoe UI", 10, "bold"))
         self.style.configure("Status.TLabel",
             foreground="#969696"
         )
@@ -977,6 +1341,7 @@ class SaveEditorGUI:
         self._build_layout()
         self._load_scope_options()
         self._refresh_mailbox()
+        self._refresh_quests_tree()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_requested)
         self._start_music()
 
@@ -1035,17 +1400,20 @@ class SaveEditorGUI:
         self.tab_inventory = ttk.Frame(self.notebook)
         self.tab_mailbox = ttk.Frame(self.notebook)
         self.tab_catalog = ttk.Frame(self.notebook)
+        self.tab_quests = ttk.Frame(self.notebook)
         self.tab_char = ttk.Frame(self.notebook)
         self.tab_help = ttk.Frame(self.notebook)
-        
+
         self.notebook.add(self.tab_inventory)
         self.notebook.add(self.tab_catalog)
         self.notebook.add(self.tab_mailbox)
+        self.notebook.add(self.tab_quests)
         self.notebook.add(self.tab_char)
         self.notebook.add(self.tab_help)
 
         self._build_help_tab(self.tab_help)
         self._build_char_tab(self.tab_char)
+        self._build_quests_tab(self.tab_quests)
 
         toolbar = ttk.Frame(self.tab_inventory)
         toolbar.pack(fill="x", padx=4, pady=4)
@@ -1100,10 +1468,19 @@ class SaveEditorGUI:
             activebackground="#0e639c", 
             activeforeground="#ffffff"
         )
+        # Each action twice: the plain entry does the obvious thing without asking, the
+        # "..." one opens a dialog. Keeping both means the common case stays one click.
         self.context_menu.add_command(command=self._repair_selected)
+        self.context_menu.add_command(command=self._repair_selected_custom)
         self.context_menu.add_command(command=self._duplicate_selected)
-        # The separator keeps the one destructive entry away from Duplicate, which sits
-        # directly above it. It occupies index 2, so Delete is relabelled as index 3.
+        self.context_menu.add_command(command=self._duplicate_selected_custom)
+        self.context_menu.add_command(command=self._move_selected)
+        self.context_menu.add_command(command=self._split_selected)
+        self.context_menu.add_command(command=self._show_info_for_selected_item)
+        # The separator keeps the one destructive entry away from the rest. It occupies
+        # index 7, so Delete is relabelled as index 8. Every label below is applied by
+        # position, so inserting an entry above one of them moves a label onto the wrong
+        # action - which is why the tests assert the order.
         self.context_menu.add_separator()
         self.context_menu.add_command(command=self._delete_selected_items)
 
@@ -1215,18 +1592,25 @@ class SaveEditorGUI:
 
         self.catalog_tree = ttk.Treeview(
             catalog_wrap,
-            columns=("name", "template_id", "category", "subcategory", "size", "stack"),
+            columns=("name", "template_id", "category", "subcategory", "size", "stack",
+                     "price", "mass"),
             show="headings",
             height=14,
             yscrollcommand=catalog_scroll.set
         )
         catalog_scroll.configure(command=self.catalog_tree.yview)
         self.catalog_tree.column("name", width=260, anchor="w")
-        self.catalog_tree.column("template_id", width=290, anchor="w")
+        # 150, not the 290 a full GUID needs. Value and Weight pushed the eight columns to
+        # 1190px against the window's 1100px minimum, so at the smallest size the last column
+        # fell off the right edge with no way to scroll to it. This is the column worth
+        # shortening: the full id is in the item info window, with a button to copy it.
+        self.catalog_tree.column("template_id", width=150, anchor="w")
         self.catalog_tree.column("category", width=160, anchor="w")
         self.catalog_tree.column("subcategory", width=170, anchor="w")
         self.catalog_tree.column("size", width=70, anchor="center")
         self.catalog_tree.column("stack", width=80, anchor="center")
+        self.catalog_tree.column("price", width=90, anchor="e")
+        self.catalog_tree.column("mass", width=70, anchor="e")
         self.catalog_tree.pack(side="left", fill="both", expand=True)
         self.catalog_tree.bind("<Button-3>", self._on_catalog_right_click)
 
@@ -1240,6 +1624,7 @@ class SaveEditorGUI:
         )
         self.catalog_menu.add_command(command=self._add_selected_catalog_item_to_inventory)
         self.catalog_menu.add_command(command=self._offer_selected_catalog_item_at_trader)
+        self.catalog_menu.add_command(command=self._show_info_for_selected_catalog_row)
 
         status_bar_frame = ttk.Frame(self.root)
         status_bar_frame.pack(fill="x", padx=8, pady=(0, 8))
@@ -1258,7 +1643,9 @@ class SaveEditorGUI:
 
         self.mute_button = ttk.Button(
             status_bar_frame,
-            width=8,
+            # The emoji renders wider than a character cell, so 8 cut the German "Stumm"
+            # down to "Stumr". Measured against the longest of the six labels.
+            width=11,
             command=self._toggle_music,
         )
         self.mute_button.pack(side="right", padx=(6, 0))
@@ -1284,6 +1671,13 @@ class SaveEditorGUI:
 
         self.backup_keep_label = ttk.Label(status_bar_frame)
         self.backup_keep_label.pack(side="right", padx=(12, 0))
+
+        # Next to the retention field, because both are about the same folder.
+        self.restore_button = ttk.Button(
+            status_bar_frame,
+            command=self._open_restore_backup_dialog,
+        )
+        self.restore_button.pack(side="right", padx=(12, 0))
 
         status_bar = ttk.Label(status_bar_frame, textvariable=self.status_var, anchor="w", relief="flat", style="Status.TLabel")
         status_bar.pack(side="left", fill="x", expand=True)
@@ -1381,6 +1775,7 @@ class SaveEditorGUI:
         self.notebook.tab(self.tab_inventory, text=t["tab_inventory"])
         self.notebook.tab(self.tab_mailbox, text=t["tab_mailbox"])
         self.notebook.tab(self.tab_catalog, text=t["tab_catalog"])
+        self.notebook.tab(self.tab_quests, text=t["tab_quests"])
         self.notebook.tab(self.tab_char, text=t["tab_hackerman"])
         self.notebook.tab(self.tab_help, text=t["tab_help"])
         
@@ -1394,11 +1789,17 @@ class SaveEditorGUI:
         for button in self.discard_buttons:
             button.configure(text=t["btn_discard"])
         
-        # Update context menu items
+        # Update context menu items. The indices are positional, so they move whenever an
+        # entry is inserted above them.
         self.context_menu.entryconfigure(0, label=t["ctx_repair"])
-        self.context_menu.entryconfigure(1, label=t["ctx_duplicate"])
-        # Index 2 is the separator.
-        self.context_menu.entryconfigure(3, label=t["ctx_delete"])
+        self.context_menu.entryconfigure(1, label=t["ctx_repair_custom"])
+        self.context_menu.entryconfigure(2, label=t["ctx_duplicate"])
+        self.context_menu.entryconfigure(3, label=t["ctx_duplicate_custom"])
+        self.context_menu.entryconfigure(4, label=t["ctx_move"])
+        self.context_menu.entryconfigure(5, label=t["ctx_split"])
+        self.context_menu.entryconfigure(6, label=t["ctx_info"])
+        # Index 7 is the separator.
+        self.context_menu.entryconfigure(8, label=t["ctx_delete"])
         
         # 4. Mailbox Tab
         self.mail_delete_btn.configure(text=t["btn_delete_mail"])
@@ -1419,6 +1820,16 @@ class SaveEditorGUI:
         self.cat_search_btn.configure(text=t["btn_search"])
         self.catalog_menu.entryconfigure(0, label=t["ctx_add_to_inv"])
         self.catalog_menu.entryconfigure(1, label=t["ctx_offer_at_trader"])
+        self.catalog_menu.entryconfigure(2, label=t["ctx_info"])
+
+        # 5b. Quests Tab. The group and status names sit inside the tree rows, so
+        # relabelling the widgets is not enough - the rows have to be rebuilt.
+        self.quests_tree.heading("#0", text=t["tab_quests"])
+        self.quests_tree.heading("status", text=t["col_quest_status"])
+        self.quests_tree.heading("flags", text=t["col_quest_flags"])
+        self.quests_tree.heading("sender", text=t["col_quest_sender"])
+        self.quests_tree.heading("reward", text=t["col_quest_reward"])
+        self._refresh_quests_tree()
         
         # Catalog Table Headings
         self.catalog_tree.heading("name", text=t["col_cat_name"])
@@ -1427,6 +1838,8 @@ class SaveEditorGUI:
         self.catalog_tree.heading("subcategory", text=t["col_cat_subcategory"])
         self.catalog_tree.heading("size", text=t["col_cat_size"])
         self.catalog_tree.heading("stack", text=t["col_cat_stack"])
+        self.catalog_tree.heading("price", text=t["col_cat_price"])
+        self.catalog_tree.heading("mass", text=t["col_cat_mass"])
         
         # 6. Hackerman Tab Warning Frame
         self.warning_title.configure(text=t["lbl_warn_title"])
@@ -1501,6 +1914,7 @@ class SaveEditorGUI:
         self.help_text_area.configure(state="disabled")
         
         self.backup_keep_label.configure(text=t["backups_keep_label"])
+        self.restore_button.configure(text=t["btn_restore_backup"])
 
         # 8. Mute Button Text
         if hasattr(self, "music_muted") and self.music_muted:
@@ -1570,6 +1984,17 @@ class SaveEditorGUI:
             ("Restores item durability back to 100%.\n", "bullet"),
             ("  - Duplicate Item: ", "highlight"),
             ("Creates a clone and asks which container it goes into; the original's own container is the default and Inbox is always available.\n", "bullet"),
+            ("  - Move Item...: ", "highlight"),
+            ("Takes the item to another container. Attachments come along, and an equipped "
+             "item leaves its slot empty. The shelter is not offered - the game files do not "
+             "describe its grid, so the editor does not guess at it.\n", "bullet"),
+            ("  - Split Stack...: ", "highlight"),
+            ("Takes part of a stack into a second one. At least one unit stays behind, since "
+             "taking all of them would be a move rather than a split.\n", "bullet"),
+            ("  - Item Info: ", "highlight"),
+            ("Everything known about the item, read-only: value, weight, size, what "
+             "recycling it yields at each recycler stage - with the one your own module can "
+             "reach marked - and which recipes use it as an ingredient.\n", "bullet"),
             ("  - Delete Item: ", "highlight"),
             ("Removes the item and everything attached to it. To drop a single attachment "
              "instead, expand the item and right-click that attachment's own row. Warehouse "
@@ -1581,8 +2006,10 @@ class SaveEditorGUI:
             ("Filter by item categories or search for specific item names.\n", "bullet"),
             ("• Spawn Items: ", "bullet"),
             ("Right-click an item template in the list and pick ", "bullet"),
-            ("Add to Inventory", "highlight"),
-            (" and the editor then asks where it should go.\n", "bullet"),
+            ("Add to Inventory...", "highlight"),
+            (". One window asks how many, where they go, and - for items that can carry one "
+             "- the condition they start at. Left at the maximum the item is spawned "
+             "pristine, which is how the game stores an untouched one.\n", "bullet"),
             ("• Where it goes: ", "bullet"),
             ("The list names every container with room and how much of it. A free spot is searched for there, and the item is turned 90° only if it fits no other way. Several items are placed one by one, so you are told if only part of a batch fits.\n", "bullet"),
             ("• Inbox: ", "bullet"),
@@ -1634,7 +2061,23 @@ class SaveEditorGUI:
             (" folder next to this program. Nothing there is ever overwritten. ", "bullet"),
             ("Keep backups", "highlight"),
             (" in the bottom right sets how many are kept - once the next one is written, "
-             "anything older than that is deleted. Set it to 0 to keep every backup.\n\n\n", "bullet"),
+             "anything older than that is deleted. Set it to 0 to keep every backup.\n", "bullet"),
+            ("• Going back: ", "bullet"),
+            ("Restore backup...", "highlight"),
+            (" puts one back in place of your save. Your current save is copied aside first, "
+             "so the restore itself can be undone. Nothing in the folder is deleted, and a "
+             "file this editor did not write is never offered.\n\n\n", "bullet"),
+
+            ("★ QUESTS ★\n\n", "header"),
+            ("• What the tab shows: ", "bullet"),
+            ("Every quest in the game against the ones your save has met, grouped and split "
+             "into active, completed and never seen. The never-seen branches start open. "
+             "Pick a quest for the full briefing, what it needs finished first, who sends it "
+             "and what it pays.\n", "bullet"),
+            ("• Read-only: ", "bullet"),
+            ("Nothing here is written back. The progress of a running quest is not in the "
+             "save at all, only what the quest asks for - so it cannot be shown either.\n\n\n",
+             "bullet"),
 
             ("★ SUPPORT THE PROJECT ★\n\n", "header"),
             ("• Support on Ko-fi: ", "bullet"),
@@ -1660,6 +2103,19 @@ class SaveEditorGUI:
             ("Setzt die Haltbarkeit des Gegenstands auf 100% zurück.\n", "bullet"),
             ("  - Gegenstand duplizieren: ", "highlight"),
             ("Erstellt eine Kopie und fragt, in welchen Behälter sie soll; vorgegeben ist der Behälter des Originals, der Posteingang steht immer zur Wahl.\n", "bullet"),
+            ("  - Gegenstand verschieben...: ", "highlight"),
+            ("Bringt den Gegenstand in einen anderen Behälter. Anbauteile kommen mit, und ein "
+             "ausgerüsteter Gegenstand lässt seinen Platz leer zurück. Der Unterschlupf wird "
+             "nicht angeboten - die Spieldateien beschreiben sein Raster nicht, und der Editor "
+             "rät die Größe nicht.\n", "bullet"),
+            ("  - Stapel teilen...: ", "highlight"),
+            ("Trennt einen Teil eines Stapels zu einem zweiten ab. Mindestens ein Stück bleibt "
+             "zurück, denn alles abzutrennen wäre ein Verschieben und kein Teilen.\n", "bullet"),
+            ("  - Info zum Gegenstand: ", "highlight"),
+            ("Alles, was über den Gegenstand bekannt ist, nur zur Ansicht: Wert, Gewicht, "
+             "Größe, was beim Recyceln auf jeder Ausbaustufe herauskommt - die für deinen "
+             "eigenen Recycler erreichbare ist markiert - und in welchen Rezepten er Zutat "
+             "ist.\n", "bullet"),
             ("  - Gegenstand löschen: ", "highlight"),
             ("Entfernt den Gegenstand samt allem, was daran hängt. Um nur einen einzelnen "
              "Anbauteil zu entfernen, klappe den Gegenstand auf und mache den Rechtsklick auf "
@@ -1671,8 +2127,10 @@ class SaveEditorGUI:
             ("Filtere nach Kategorien oder suche nach bestimmten Namen.\n", "bullet"),
             ("• Gegenstände spawnen: ", "bullet"),
             ("Rechtsklick auf einen Gegenstand in der Liste, dann ", "bullet"),
-            ("Ins Inventar spawnen", "highlight"),
-            (" - der Editor fragt dann, wohin er soll.\n", "bullet"),
+            ("Zum Inventar hinzufügen...", "highlight"),
+            (". Ein Fenster fragt wie viele, wohin, und - bei Gegenständen, die einen tragen "
+             "können - mit welchem Zustand sie beginnen. Beim Maximum entstehen sie "
+             "makellos, so wie das Spiel einen unberührten Gegenstand ablegt.\n", "bullet"),
             ("• Wohin es kommt: ", "bullet"),
             ("Die Liste nennt jeden Behälter mit Platz und wie viel davon frei ist. Dort wird ein freier Platz gesucht, gedreht wird nur, wenn es sonst nicht passt. Mehrere Gegenstände werden einzeln platziert; passt nur ein Teil, wird es dir gesagt.\n", "bullet"),
             ("• Posteingang: ", "bullet"),
@@ -1726,7 +2184,24 @@ class SaveEditorGUI:
             ("Backups behalten", "highlight"),
             (" unten rechts legt fest, wie viele aufbewahrt werden - sobald das nächste "
              "geschrieben wird, verschwindet alles Ältere darüber hinaus. Mit 0 bleibt "
-             "jedes Backup erhalten.\n\n\n", "bullet"),
+             "jedes Backup erhalten.\n", "bullet"),
+            ("• Zurück: ", "bullet"),
+            ("Backup zurückspielen...", "highlight"),
+            (" setzt eines an die Stelle deines Spielstands. Der aktuelle Stand wird vorher "
+             "weggesichert, das Zurückspielen ist also selbst umkehrbar. Im Ordner wird nichts "
+             "gelöscht, und eine Datei, die dieser Editor nicht geschrieben hat, wird gar "
+             "nicht erst angeboten.\n\n\n", "bullet"),
+
+            ("★ QUESTS ★\n\n", "header"),
+            ("• Was der Reiter zeigt: ", "bullet"),
+            ("Alle Quests des Spiels gegen die, denen dein Spielstand begegnet ist - "
+             "gruppiert und aufgeteilt in aktiv, erledigt und nie gesehen. Die "
+             "Nie-gesehen-Zweige sind offen. Wähle eine Quest für den vollen Text, was sie "
+             "voraussetzt, wer sie schickt und was sie bringt.\n", "bullet"),
+            ("• Nur zur Ansicht: ", "bullet"),
+            ("Hier wird nichts zurückgeschrieben. Der Fortschritt einer laufenden Quest steht "
+             "gar nicht im Spielstand, nur ihr Ziel - deshalb lässt er sich auch nicht "
+             "anzeigen.\n\n\n", "bullet"),
 
             ("★ PROJEKT UNTERSTÜTZEN ★\n\n", "header"),
             ("• Auf Ko-fi unterstützen: ", "bullet"),
@@ -1752,6 +2227,17 @@ class SaveEditorGUI:
             ("Восстанавливает прочность предмета до 100%.\n", "bullet"),
             ("  - Дублировать предмет: ", "highlight"),
             ("Создаёт копию и спрашивает, в какой контейнер её поместить; по умолчанию — контейнер оригинала, Входящие доступны всегда.\n", "bullet"),
+            ("  - Переместить предмет...: ", "highlight"),
+            ("Переносит предмет в другой контейнер. Навески перемещаются вместе с ним, а "
+             "надетый предмет освобождает свой слот. Убежище не предлагается: игровые файлы "
+             "не описывают его сетку, и редактор не угадывает размер.\n", "bullet"),
+            ("  - Разделить стак...: ", "highlight"),
+            ("Отделяет часть стака во второй стак. Хотя бы одна штука остаётся на месте: "
+             "отделить всё — это перемещение, а не разделение.\n", "bullet"),
+            ("  - Информация о предмете: ", "highlight"),
+            ("Всё, что известно о предмете, только для чтения: цена, вес, размер, что даёт "
+             "переработка на каждом уровне модуля — доступный вашему переработчику отмечен — "
+             "и в каких рецептах предмет является ингредиентом.\n", "bullet"),
             ("  - Удалить предмет: ", "highlight"),
             ("Удаляет предмет вместе со всем, что к нему присоединено. Чтобы снять только "
              "одно вложение, разверните предмет и нажмите правой кнопкой по строке самого "
@@ -1763,8 +2249,10 @@ class SaveEditorGUI:
             ("Фильтруйте по категориям или ищите предметы по названию.\n", "bullet"),
             ("• Спавн предметов: ", "bullet"),
             ("Щёлкните предмет в списке правой кнопкой и выберите ", "bullet"),
-            ("Добавить в инвентарь", "highlight"),
-            (" - редактор спросит, куда его положить.\n", "bullet"),
+            ("Добавить в инвентарь...", "highlight"),
+            (". Одно окно спрашивает сколько, куда и - у предметов, которые его имеют - "
+             "с каким состоянием они появятся. При максимуме предмет создаётся идеальным: "
+             "именно так игра хранит нетронутый предмет.\n", "bullet"),
             ("• Куда попадёт: ", "bullet"),
             ("В списке указан каждый контейнер со свободным местом. Там ищется свободная ячейка; поворот на 90° — только если иначе не влезает.\n", "bullet"),
             ("• Входящие: ", "bullet"),
@@ -1817,7 +2305,24 @@ class SaveEditorGUI:
             ("Хранить копий", "highlight"),
             (" в правом нижнем углу задаёт, сколько копий остаётся: как только будет "
              "записана следующая, всё более старое сверх этого числа удаляется. "
-             "Значение 0 сохраняет все копии.\n\n\n", "bullet"),
+             "Значение 0 сохраняет все копии.\n", "bullet"),
+            ("• Возврат: ", "bullet"),
+            ("Восстановить копию...", "highlight"),
+            (" ставит копию на место сохранения. Текущее сохранение сначала копируется "
+             "в сторону, так что и само восстановление обратимо. В папке ничего не "
+             "удаляется, а файл, который редактор не создавал, не предлагается вовсе.\n\n\n",
+             "bullet"),
+
+            ("★ КВЕСТЫ ★\n\n", "header"),
+            ("• Что показывает вкладка: ", "bullet"),
+            ("Все квесты игры против тех, что встречались в вашем сохранении - по группам "
+             "и по статусу: активные, завершённые и ни разу не встреченные. Ветки "
+             "«ни разу» раскрыты сразу. Выберите квест, чтобы увидеть полный текст, "
+             "что он требует, кто его присылает и что даёт.\n", "bullet"),
+            ("• Только для просмотра: ", "bullet"),
+            ("Здесь ничего не записывается. Прогресса активного квеста в сохранении нет "
+             "вообще - есть только его цель, поэтому показать его тоже нельзя.\n\n\n",
+             "bullet"),
 
             ("★ ПОДДЕРЖАТЬ ПРОЕКТ ★\n\n", "header"),
             ("• Поддержать на Ko-fi: ", "bullet"),
@@ -2142,6 +2647,268 @@ class SaveEditorGUI:
         self.counters_hint = ttk.Label(self.tab_counters, style="Hint.TLabel",
                                        wraplength=520, justify="left")
         self.counters_hint.pack(anchor="w", padx=5, pady=(0, 5))
+
+    # --- Quests ------------------------------------------------------------------------
+
+    def _build_quests_tab(self, parent: ttk.Frame) -> None:
+        """A read-only view of every quest the game ships, against what this save has met.
+
+        Which quests exist cannot be answered from a save - it only ever names the ones it
+        has seen. The list therefore comes from the mapping report, and the save only
+        decides which of three buckets a quest lands in.
+        """
+        self.quests_count_lbl = ttk.Label(parent, style="Status.TLabel")
+        self.quests_count_lbl.pack(anchor="w", padx=10, pady=(10, 4))
+
+        # A paned window so the detail text can be dragged larger; long quest briefings run
+        # to several hundred characters and a fixed split would either waste space or clip.
+        panes = ttk.PanedWindow(parent, orient="vertical")
+        panes.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+
+        tree_frame = ttk.Frame(panes)
+        panes.add(tree_frame, weight=3)
+
+        quests_scroll = ttk.Scrollbar(tree_frame, orient="vertical")
+        quests_scroll.pack(side="right", fill="y")
+
+        self.quests_tree = ttk.Treeview(
+            tree_frame,
+            columns=("status", "flags", "sender", "reward"),
+            show="tree headings",
+            selectmode="browse",
+            yscrollcommand=quests_scroll.set,
+        )
+        quests_scroll.configure(command=self.quests_tree.yview)
+        self.quests_tree.pack(side="left", fill="both", expand=True)
+
+        self.quests_tree.column("#0", width=430, anchor="w", stretch=True)
+        self.quests_tree.column("status", width=110, anchor="w")
+        self.quests_tree.column("flags", width=130, anchor="w")
+        self.quests_tree.column("sender", width=150, anchor="w")
+        self.quests_tree.column("reward", width=190, anchor="w")
+        self.quests_tree.bind("<<TreeviewSelect>>", self._on_quest_selected)
+
+        detail_frame = ttk.Frame(panes)
+        panes.add(detail_frame, weight=1)
+
+        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical")
+        detail_scroll.pack(side="right", fill="y")
+        self.quest_detail = tk.Text(
+            detail_frame,
+            height=7,
+            wrap="word",
+            bg="#252526",
+            fg="#d4d4d4",
+            relief="flat",
+            padx=8,
+            pady=6,
+            yscrollcommand=detail_scroll.set,
+        )
+        detail_scroll.configure(command=self.quest_detail.yview)
+        self.quest_detail.pack(side="left", fill="both", expand=True)
+        self.quest_detail.tag_configure("field", foreground="#3794ff")
+        self.quest_detail.tag_configure("dim", foreground="#9a9a9a")
+        self.quest_detail.configure(state="disabled")
+
+        self.quests_hint = ttk.Label(parent, style="Hint.TLabel",
+                                     wraplength=900, justify="left")
+        self.quests_hint.pack(anchor="w", padx=10, pady=(0, 6))
+
+    def _quest_status_of(self, quest_id: str) -> str:
+        """One of "active", "done", "unseen" for a quest id."""
+        if quest_id in self._save_quest_ids()[0]:
+            return "active"
+        if quest_id in self._save_quest_ids()[1]:
+            return "done"
+        return "unseen"
+
+    def _save_quest_ids(self) -> tuple[set[str], set[str]]:
+        """The active and completed quest ids in the save, lowercased.
+
+        Two different key names for the same thing: an active quest carries `DataId`, a
+        completed one `QuestDataId`. Both are the quest template's id.
+        """
+        quests = self.manager.data.get("AccountQuests")
+        if not isinstance(quests, dict):
+            return set(), set()
+
+        def ids(rows: object, key: str) -> set[str]:
+            if not isinstance(rows, list):
+                return set()
+            return {
+                str(row.get(key)).strip().lower()
+                for row in rows
+                if isinstance(row, dict) and isinstance(row.get(key), str)
+            }
+
+        return (
+            ids(quests.get("ActiveQuests"), "DataId"),
+            ids(quests.get("CompletedQuests"), "QuestDataId"),
+        )
+
+    def _quest_label(self, meta: dict) -> str:
+        """The quest's name, or its internal one when the game ships no readable name.
+
+        88 of 302 have no resolvable name - mostly `OTHER/ANALYTICS/*` telemetry quests
+        that were never meant to be shown. The alias is what the developers call them.
+        """
+        name = meta.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        alias = str(meta.get("alias") or "").strip()
+        return alias.rsplit("/", 1)[-1] if alias else "?"
+
+    def _quest_reward_text(self, meta: dict) -> str:
+        t = TRANSLATIONS[self.current_lang]
+        rewards = meta.get("rewards") or {}
+        parts: list[str] = []
+        xp = rewards.get("xp")
+        if isinstance(xp, int) and xp > 0:
+            parts.append(t["quest_reward_xp"].format(xp=f"{xp:,}".replace(",", " ")))
+        items = rewards.get("items") or []
+        if items:
+            first = items[0]
+            name = self._template_name_for_template_id(first.get("template_id")) or "?"
+            count = first.get("count") or 1
+            label = f"{name} x{count}" if count and count > 1 else name
+            if len(items) > 1:
+                label = f"{label} +{len(items) - 1}"
+            parts.append(label)
+        return ", ".join(parts)
+
+    def _refresh_quests_tree(self) -> None:
+        """Group -> status -> quest, with the never-seen branches open.
+
+        The counts live in the node labels, so the answer the tab exists for is readable
+        without expanding anything.
+        """
+        if not hasattr(self, "quests_tree"):
+            return
+        for row in self.quests_tree.get_children(""):
+            self.quests_tree.delete(row)
+        self._quest_row_ids = {}
+
+        t = TRANSLATIONS[self.current_lang]
+        meta_all = getattr(self, "quests_meta", {}) or {}
+        active_ids, done_ids = self._save_quest_ids()
+
+        if not meta_all:
+            self.quests_hint.configure(text=t["quests_empty"])
+            self.quests_count_lbl.configure(text="")
+            self._set_quest_detail(None)
+            return
+
+        # Sorted by how many quests a group holds, so MISSIONS and OTHER come before the
+        # one-off folders instead of alphabetically burying them.
+        by_group: dict[str, list[tuple[str, dict]]] = {}
+        for quest_id, meta in meta_all.items():
+            group = str(meta.get("group") or "").strip() or t["quest_group_none"]
+            by_group.setdefault(group, []).append((quest_id, meta))
+
+        status_order = [
+            ("unseen", t["quest_status_unseen"]),
+            ("active", t["quest_status_active"]),
+            ("done", t["quest_status_done"]),
+        ]
+
+        for group, rows in sorted(by_group.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            group_node = self.quests_tree.insert(
+                "", "end", text=f"{group}  ({len(rows)})", open=False)
+
+            buckets: dict[str, list[tuple[str, dict]]] = {"unseen": [], "active": [], "done": []}
+            for quest_id, meta in rows:
+                if quest_id in active_ids:
+                    buckets["active"].append((quest_id, meta))
+                elif quest_id in done_ids:
+                    buckets["done"].append((quest_id, meta))
+                else:
+                    buckets["unseen"].append((quest_id, meta))
+
+            for status_key, status_label in status_order:
+                bucket = buckets[status_key]
+                if not bucket:
+                    continue
+                status_node = self.quests_tree.insert(
+                    group_node, "end",
+                    text=f"{status_label}  ({len(bucket)})",
+                    open=status_key == "unseen",
+                )
+                for quest_id, meta in sorted(bucket, key=lambda kv: self._quest_label(kv[1]).lower()):
+                    flags = []
+                    if meta.get("hidden"):
+                        flags.append(t["quest_flag_hidden"])
+                    if meta.get("shadow"):
+                        flags.append(t["quest_flag_shadow"])
+                    sender = self._npc_name_for_npc_bio_id(meta.get("sender_npc_id")) or ""
+                    row_id = self.quests_tree.insert(
+                        status_node, "end",
+                        text=self._quest_label(meta),
+                        values=(status_label, ", ".join(flags), sender,
+                                self._quest_reward_text(meta)),
+                    )
+                    self._quest_row_ids[row_id] = quest_id
+
+        seen = len(active_ids | done_ids)
+        self.quests_count_lbl.configure(text=t["quest_counts"].format(
+            total=len(meta_all), seen=seen, unseen=len(meta_all) - seen))
+        self.quests_hint.configure(text=t["quests_hint"])
+        self._set_quest_detail(None)
+
+    def _on_quest_selected(self, _event=None) -> None:
+        selection = self.quests_tree.selection()
+        quest_id = getattr(self, "_quest_row_ids", {}).get(selection[0]) if selection else None
+        self._set_quest_detail(quest_id)
+
+    def _set_quest_detail(self, quest_id: str | None) -> None:
+        t = TRANSLATIONS[self.current_lang]
+        self.quest_detail.configure(state="normal")
+        self.quest_detail.delete("1.0", "end")
+
+        meta = (getattr(self, "quests_meta", {}) or {}).get(quest_id or "")
+        if not meta:
+            self.quest_detail.insert("end", t["quest_pick"], "dim")
+            self.quest_detail.configure(state="disabled")
+            return
+
+        def field(label: str, value: str) -> None:
+            self.quest_detail.insert("end", f"{label}: ", "field")
+            self.quest_detail.insert("end", f"{value}\n")
+
+        self.quest_detail.insert("end", f"{self._quest_label(meta)}\n\n")
+
+        description = meta.get("description")
+        if isinstance(description, str) and description.strip():
+            field(t["quest_detail_task"], description.strip())
+
+        field(t["quest_detail_alias"], str(meta.get("alias") or "?"))
+        field(t["quest_detail_status"], {
+            "active": t["quest_status_active"],
+            "done": t["quest_status_done"],
+            "unseen": t["quest_status_unseen"],
+        }[self._quest_status_of(quest_id or "")])
+
+        required = meta.get("requires_quest_ids") or []
+        if required:
+            names = [
+                self._quest_label((getattr(self, "quests_meta", {}) or {}).get(rid, {"alias": rid}))
+                for rid in required
+            ]
+            field(t["quest_detail_requires"], ", ".join(names))
+
+        low, high = meta.get("min_account_level"), meta.get("max_account_level")
+        # -1 is the game's "no limit" on both ends, so a range of -1 to -1 says nothing.
+        if isinstance(low, int) and isinstance(high, int) and (low > 0 or high > 0):
+            field(t["quest_detail_level"], t["quest_level_range"].format(
+                min=low if low > 0 else 1, max=high if high > 0 else "-"))
+
+        sender = self._npc_name_for_npc_bio_id(meta.get("sender_npc_id"))
+        if sender:
+            field(t["quest_detail_sender"], sender)
+
+        rewards = self._quest_reward_text(meta)
+        field(t["quest_detail_rewards"], rewards or t["quest_detail_none"])
+
+        self.quest_detail.configure(state="disabled")
 
     def _max_xp_for_level(self, level: int) -> int | None:
         """The highest XP this level may hold, or None without the coefficients.
@@ -2907,6 +3674,8 @@ class SaveEditorGUI:
         self.shops_meta = {}
         self.max_account_level = TRADER_LEVEL_MAX_FALLBACK
         self.level_progress = {}
+        self.quests_meta = {}
+        self.craft_meta = {}
         self.traders_name_map = dict(TRADER_NAMES)
 
         for path in self._mapping_candidates():
@@ -2955,6 +3724,18 @@ class SaveEditorGUI:
             if isinstance(level_progress, dict):
                 self.level_progress = level_progress
 
+            quests_meta = report.get("quests_meta")
+            if isinstance(quests_meta, dict):
+                self.quests_meta = {
+                    str(k).strip().lower(): v
+                    for k, v in quests_meta.items()
+                    if isinstance(v, dict)
+                }
+
+            craft_meta = report.get("craft_meta")
+            if isinstance(craft_meta, dict):
+                self.craft_meta = craft_meta
+
             item_catalog = report.get("item_catalog", [])
             if isinstance(item_catalog, list):
                 for row in item_catalog:
@@ -2995,6 +3776,7 @@ class SaveEditorGUI:
         self.template_name_map = dict(self.manual_alias_map)
         self.game_item_catalog = []
         self.game_item_meta_by_template_id = {}
+        self.craft_meta = {}
 
     def _extractor_script_path(self) -> Path:
         base_dir = Path(__file__).resolve().parent
@@ -3738,6 +4520,22 @@ class SaveEditorGUI:
                 if isinstance(capacity, (int, float)) and capacity > 0
                 else "-"
             )
+            # A missing price or weight stays blank rather than becoming 0. 485 templates
+            # have no price at all - 21 of them carry an empty price list, which is the
+            # game's way of saying "not for sale" - and zero credits would be a claim the
+            # data does not make.
+            price = row.get("price")
+            price_text = (
+                f"{int(price):,}".replace(",", " ")
+                if isinstance(price, (int, float)) and not isinstance(price, bool)
+                else "-"
+            )
+            mass = row.get("mass")
+            mass_text = (
+                _trim_float(float(mass))
+                if isinstance(mass, (int, float)) and not isinstance(mass, bool)
+                else "-"
+            )
             self.catalog_tree.insert(
                 "",
                 "end",
@@ -3748,6 +4546,8 @@ class SaveEditorGUI:
                     subcategory_text,
                     size_text,
                     stack_text,
+                    price_text,
+                    mass_text,
                 ),
             )
 
@@ -3775,6 +4575,15 @@ class SaveEditorGUI:
         return template_id, str(values[0])
 
     def _add_selected_catalog_item_to_inventory(self) -> None:
+        """One dialog for spawning, rather than a chain of prompts.
+
+        This used to be two menu entries: a plain one asking count and destination in two
+        consecutive dialogs, and a "..." one asking the same in a single window plus a
+        starting condition. Measured against the catalog, the plain path offered nothing the
+        other did not - the extra fields only apply to 586 of 1595 templates, and for the
+        other 1009 the two were the same two questions in a different number of windows.
+        So there is one entry now. The dialog shows only the fields a template can use.
+        """
         t = TRANSLATIONS[self.current_lang]
         selection = self._selected_catalog_template()
         if not selection:
@@ -3782,33 +4591,68 @@ class SaveEditorGUI:
         template_id = selection[0]
 
         capacity = self._stack_capacity_for_template(template_id)
-        if capacity:
-            # Stackables default to a full stack, which is what you almost always want.
-            copy_count = simpledialog.askinteger(
-                t["msg_add_item_title"],
-                t["msg_add_stack_prompt"].format(capacity=capacity),
-                minvalue=1,
-                initialvalue=capacity,
-                parent=self.root,
-            )
-        else:
-            copy_count = simpledialog.askinteger(
-                t["msg_add_item_title"],
-                t["msg_add_item_prompt"],
-                minvalue=1,
-                initialvalue=1,
-                parent=self.root,
-            )
-        if copy_count is None:
+        condition_field, condition_max = self._condition_ceiling_for_template(template_id)
+
+        result = self._ask_amount_and_target(
+            title=t["msg_add_item_title"],
+            count_label=t["custom_count"],
+            # Stackables default to one full stack, which is what you almost always want.
+            count_default=1,
+            capacity=capacity,
+            condition_max=condition_max,
+            condition_field=condition_field,
+        )
+        if result is None:
+            return
+        copy_count, units, condition, target = result
+
+        self._add_catalog_template(
+            template_id, [units] * copy_count, target,
+            condition=None if condition is None else (condition_field, condition),
+        )
+
+    def _condition_ceiling_for_template(
+        self, template_id: str | None
+    ) -> tuple[str | None, float | None]:
+        """Which condition a *newly spawned* item of this template could carry.
+
+        The instance-level `_condition_fields_of` cannot answer this: a spawned item has no
+        condition field yet, and its absence is exactly what pristine means. So the question
+        has to be put to the template. Charges come with a `max_durability`; the 0-4 wear
+        scale has no per-template ceiling and is flagged by `has_wear_condition`.
+        """
+        meta = self.game_item_meta_by_template_id.get(
+            str(template_id or "").strip().lower(), {})
+        ceiling = meta.get("max_durability")
+        if isinstance(ceiling, (int, float)) and ceiling > 0:
+            return "DurabilityComponent_durability", float(ceiling)
+        if meta.get("has_wear_condition"):
+            return "Condition_d", 4.0
+        return None, None
+
+    def _add_catalog_template(
+        self,
+        template_id: str,
+        quantities: list[int | None],
+        parent_id: str,
+        condition: tuple[str | None, float] | None = None,
+    ) -> None:
+        """Spawns one item per entry in `quantities`, each carrying that stack size.
+
+        A list rather than a count, because the two entry points mean different things by
+        "how many": the plain one takes a total number of units and splits it into stacks,
+        the "..." one takes a number of stacks and a size for each.
+
+        `condition` writes a starting wear value. Left out, the item is spawned pristine -
+        which is no field at all, the way the game stores an untouched item.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        if not quantities:
             return
 
         meta = self.game_item_meta_by_template_id.get(template_id, {})
         width = meta.get("width")
         height = meta.get("height")
-
-        parent_id = self._ask_placement_target(t["msg_add_item_title"])
-        if not parent_id:
-            return
 
         to_inbox = parent_id == "inbox"
         target_label = t["target_inbox"] if to_inbox else ""
@@ -3858,30 +4702,28 @@ class SaveEditorGUI:
                 quantity=quantity,
                 position=(i, j),
             )
-            if rotated:
+            if rotated or condition:
                 inner = created.setdefault("AdditionalData", {}).setdefault("_data", {})
-                inner["BaseComponent_rotated"] = True
+                if rotated:
+                    inner["BaseComponent_rotated"] = True
+                if condition:
+                    field, value = condition
+                    inner[field] = float(value)
+                    # The ceiling a repair kit can restore to. Left at the template maximum
+                    # it would let the item be repaired past what it was spawned at, which
+                    # is fine - but the field only exists once durability does.
+                    if field == "DurabilityComponent_durability":
+                        ceiling = meta.get("max_durability")
+                        if isinstance(ceiling, (int, float)) and ceiling > 0:
+                            inner["DurabilityComponent_md"] = float(ceiling)
             return True
 
         added = 0
-        wanted = 0
-        if capacity:
-            # Split the requested amount into full stacks plus a remainder, since the
-            # game refuses quantities above StackCapacity.
-            remaining = copy_count
-            while remaining > 0:
-                chunk = min(remaining, capacity)
-                wanted += 1
-                if not place_one(chunk):
-                    break
-                remaining -= chunk
-                added += 1
-        else:
-            wanted = copy_count
-            for _ in range(copy_count):
-                if not place_one(None):
-                    break
-                added += 1
+        wanted = len(quantities)
+        for quantity in quantities:
+            if not place_one(quantity):
+                break
+            added += 1
 
         if not added:
             messagebox.showwarning(
@@ -4314,17 +5156,27 @@ class SaveEditorGUI:
             parent=self.root,
         )
 
-    def _duplicate_members(self, members: list[str], copy_count: int) -> None:
+    def _duplicate_members(
+        self,
+        members: list[str],
+        copy_count: int,
+        target: str | None = None,
+    ) -> list[str]:
+        """Copies the given items and returns the ids of the copies.
+
+        `target` skips the placement prompt, for the caller that has already asked.
+        """
         t = TRANSLATIONS[self.current_lang]
 
         # Where the copies go. "same" keeps each copy in its original's container, which is
         # what the action used to do - except it also kept the original's cell, so the copy
         # landed on top of it and the game moved it to the mailbox.
-        origin_parent = str((self.manager.get_item(members[0]) or {}).get("ParentId") or "")
-        target = self._ask_placement_target(
-            t["ctx_duplicate"], same_container_id=origin_parent or None)
+        if target is None:
+            origin_parent = str((self.manager.get_item(members[0]) or {}).get("ParentId") or "")
+            target = self._ask_placement_target(
+                t["ctx_duplicate"], same_container_id=origin_parent or None)
         if not target:
-            return
+            return []
 
         created_ids: list[str] = []
         failures: list[str] = []
@@ -4388,7 +5240,7 @@ class SaveEditorGUI:
                     target=target_label, width=footprint[0], height=footprint[1]),
                 parent=self.root,
             )
-            return
+            return []
         if no_space:
             messagebox.showinfo(
                 t["ctx_duplicate"],
@@ -4402,7 +5254,7 @@ class SaveEditorGUI:
         if not created_ids:
             failed_hint = f" First failed item: {failures[0]}" if failures else ""
             messagebox.showerror(t["title"], t["msg_duplicate_failed"].format(failed_hint=failed_hint))
-            return
+            return []
 
         reopen = self._capture_open_member_ids()
         self._populate_scope_view(reopen_member_ids=reopen)
@@ -4411,6 +5263,7 @@ class SaveEditorGUI:
         self._mark_pending_changes(
             f"Duplicated {mode_label}: created {len(created_ids)}{failure_note}"
         )
+        return created_ids
 
     def _repair_selected(self) -> None:
         item_id = self._selected_item_id()
@@ -4419,16 +5272,931 @@ class SaveEditorGUI:
         self._repair_item_id(item_id)
 
     def _duplicate_selected(self) -> None:
+        """One copy, same container, no questions asked.
+
+        The fast path. It used to ask for a count and then for a destination, which made it
+        indistinguishable from the "..." entry beside it - two prompts either way. Anything
+        other than a single copy next to the original goes through that one now.
+        """
         members = self._selected_members()
         if not members:
             return
-        copy_count = self._prompt_duplicate_count(
-            is_stack=len(members) > 1,
-            stack_size=len(members),
-        )
-        if copy_count is None:
+        self._duplicate_members(members, 1, target="same")
+
+    # --- The "..." variants ---------------------------------------------------------------
+    # Same actions, one dialog instead of a chain of prompts. The plain entries stay for the
+    # common case; these exist for when the defaults are not what you want.
+
+    def _duplicate_selected_custom(self) -> None:
+        members = self._selected_members()
+        if not members:
             return
-        self._duplicate_members(members, copy_count)
+        t = TRANSLATIONS[self.current_lang]
+
+        capacity = self._stack_capacity_for_template(
+            (self.manager.get_item(members[0]) or {}).get("TemplateId"))
+        origin_parent = str((self.manager.get_item(members[0]) or {}).get("ParentId") or "")
+
+        # No condition field here: a copy keeps whatever the original carries, and offering
+        # to change it would quietly do two different things at once.
+        result = self._ask_amount_and_target(
+            title=t["custom_title_duplicate"],
+            count_label=t["custom_count"],
+            count_default=1,
+            capacity=capacity,
+            same_container_id=origin_parent or None,
+        )
+        if result is None:
+            return
+        copy_count, units, _condition, target = result
+
+        created = self._duplicate_members(members, copy_count, target=target)
+        if units is not None and created:
+            # The copies only. The original keeps its own count, which is what you want when
+            # duplicating a half-empty stack into full ones.
+            for item_id in created:
+                item = self.manager.get_item(item_id)
+                if not item:
+                    continue
+                inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+                if "StackableComponent_quantity" in inner:
+                    inner["StackableComponent_quantity"] = units
+            reopen = self._capture_open_member_ids()
+            self._populate_scope_view(reopen_member_ids=reopen)
+
+    def _repair_selected_custom(self) -> None:
+        members = self._selected_members()
+        if not members:
+            return
+        self._open_set_condition_dialog(members[0])
+
+    # --- Moving and splitting ---------------------------------------------------------
+
+    def _move_selected(self) -> None:
+        """Moves the selected item into another container.
+
+        Unlike duplicating, this is one item and not a grouped row: moving three stacks that
+        happen to share a row would need three free spots and would half-succeed when only
+        two were left. `_resolve_target_item_id` asks which one when the row covers several.
+        """
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        t = TRANSLATIONS[self.current_lang]
+
+        if self.manager.is_structural(item_id):
+            messagebox.showwarning(t["move_title"], t["move_structural"], parent=self.root)
+            return
+
+        origin_parent = str((self.manager.get_item(item_id) or {}).get("ParentId") or "")
+        target = self._ask_placement_target(t["move_title"])
+        if not target:
+            return
+
+        # The inbox is not a container: an item with no valid cell is what the game hands
+        # you as mail, so it keeps its parent and loses its position instead.
+        if target == "inbox":
+            parent_id, spot = origin_parent, (-1, -1, False)
+            if not parent_id:
+                messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
+                return
+        else:
+            parent_id = target
+            footprint = self._footprint_for_item(item_id)
+            if footprint is None:
+                messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
+                return
+            # The item's own cells are still counted as taken while the spot is searched.
+            # Harmless for a move into another container, and for a move inside the same one
+            # it only means the item never lands on the spot it already occupies.
+            spot = self._placement_in(parent_id, footprint[0], footprint[1])
+            if spot is None:
+                target_label = next(
+                    (label for cid, label in self._placement_targets() if cid == target),
+                    target,
+                )
+                messagebox.showwarning(
+                    t["move_title"],
+                    t["move_no_space"].format(
+                        target=target_label, width=footprint[0], height=footprint[1]),
+                    parent=self.root,
+                )
+                return
+
+        i, j, rotated = spot
+        moved = self.manager.move_item(item_id, parent_id, position=(i, j))
+        if not moved:
+            messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
+            return
+
+        item = self.manager.get_item(item_id) or {}
+        inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+        if rotated:
+            inner["BaseComponent_rotated"] = True
+        else:
+            inner.pop("BaseComponent_rotated", None)
+
+        target_label = t["target_inbox"] if target == "inbox" else next(
+            (label for cid, label in self._placement_targets() if cid == target), target)
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._mark_pending_changes(
+            t["status_moved"].format(count=len(moved), target=target_label))
+
+    def _split_selected(self) -> None:
+        """Takes part of a stack off into a second stack."""
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        t = TRANSLATIONS[self.current_lang]
+
+        item = self.manager.get_item(item_id)
+        quantity = self._stack_quantity_of_item(item)
+        # One unit is stored as a stack of one in some saves and as no quantity at all in
+        # others; neither can be split, and both mean the same thing to the user.
+        if not quantity or quantity < 2:
+            messagebox.showinfo(t["split_title"], t["split_not_stackable"], parent=self.root)
+            return
+
+        origin_parent = str((item or {}).get("ParentId") or "")
+        result = self._ask_amount_and_target(
+            title=t["split_title"],
+            count_label=t["split_prompt"].format(quantity=quantity),
+            count_default=quantity // 2,
+            count_max=quantity - 1,
+            capacity=None,
+            same_container_id=origin_parent or None,
+            hint=t["split_hint"],
+        )
+        if result is None:
+            return
+        amount, _units, _condition, target = result
+
+        if target == "inbox":
+            parent_id, spot = origin_parent, (-1, -1, False)
+        else:
+            parent_id = origin_parent if target == "same" else target
+            footprint = self._footprint_for_item(item_id) or (1, 1)
+            spot = self._placement_in(parent_id, footprint[0], footprint[1])
+            if spot is None:
+                target_label = next(
+                    (label for cid, label in self._placement_targets() if cid == target),
+                    t["target_same_container"] if target == "same" else target,
+                )
+                messagebox.showwarning(
+                    t["split_title"], t["split_no_space"].format(target=target_label),
+                    parent=self.root)
+                return
+
+        i, j, rotated = spot
+        clone = self.manager.split_stack(item_id, amount, parent_id=parent_id, position=(i, j))
+        if clone is None:
+            messagebox.showerror(t["split_title"], t["move_failed"], parent=self.root)
+            return
+
+        inner = clone.setdefault("AdditionalData", {}).setdefault("_data", {})
+        if rotated:
+            inner["BaseComponent_rotated"] = True
+        else:
+            inner.pop("BaseComponent_rotated", None)
+
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._mark_pending_changes(
+            t["status_split"].format(amount=amount, quantity=quantity))
+
+    # --- Item info --------------------------------------------------------------------
+    # Read-only throughout. Nothing in this dialog writes to the save; the one button that
+    # does anything puts the template id on the clipboard.
+
+    def _recycler_level(self) -> int | None:
+        """How far the player's own Recycler is built, or None when there is no module.
+
+        The save records shelter modules as items carrying two abbreviated fields:
+        `ShelterModuleComponent_smf` names the foundation, `ShelterModuleComponent_cl` the
+        level. The level is missing on six of a real save's 24 modules, which by the
+        serializer's own rule means zero - an unbuilt foundation rather than an unknown one.
+        A zero is therefore reported as "not built", the same as no module at all.
+        """
+        foundation = str((self.craft_meta or {}).get("recycler_foundation_id") or "")
+        if not foundation:
+            return None
+        for item in self.manager.get_all_items_flat():
+            inner = (item.get("AdditionalData") or {}).get("_data") or {}
+            if not isinstance(inner, dict):
+                continue
+            if str(inner.get("ShelterModuleComponent_smf") or "").strip().lower() != foundation:
+                continue
+            level = inner.get("ShelterModuleComponent_cl")
+            if isinstance(level, int) and not isinstance(level, bool) and level > 0:
+                return level
+            return None
+        return None
+
+    def _format_duration(self, seconds: int | None) -> str:
+        t = TRANSLATIONS[self.current_lang]
+        if not isinstance(seconds, int) or seconds <= 0:
+            return t["info_none"]
+        if seconds >= 3600:
+            return t["info_hours"].format(hours=_trim_float(seconds / 3600.0))
+        return t["info_minutes"].format(minutes=int(round(seconds / 60.0)))
+
+    def _item_location_text(self, item_id: str) -> str:
+        """Which container the item sits in, and where in it."""
+        t = TRANSLATIONS[self.current_lang]
+        item = self.manager.get_item(item_id) or {}
+        parent_id = str(item.get("ParentId") or "")
+
+        where = None
+        for index, tab_id in enumerate(self.manager.get_inventory_tabs(), 1):
+            if tab_id == parent_id:
+                where = t["info_tab"].format(idx=index)
+                break
+        if where is None and parent_id:
+            where = (
+                self._template_name_for_item_id(parent_id)
+                or (t["scope_shelter"] if parent_id == self.manager.section_roots.get(
+                    "ShelterItemDto") else None)
+            )
+        parts = [where] if where else []
+
+        position = item.get("Position")
+        if isinstance(position, dict):
+            i, j = int(position.get("I") or 0), int(position.get("J") or 0)
+            # (-1, -1) is what an item with no place looks like; the game hands those to you
+            # as mail rather than drawing them in a grid.
+            if i >= 0 and j >= 0:
+                parts.append(t["info_where_cell"].format(i=i, j=j))
+
+        if self.manager.is_equipped(item_id):
+            parts.append(t["info_equipped"])
+        attached = len(self.manager.collect_subtree(item_id)) - 1
+        if attached > 0:
+            parts.append(t["info_attachments"].format(count=attached))
+
+        return "   ".join(parts) if parts else t["info_none"]
+
+    def _show_info_for_selected_item(self) -> None:
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        item = self.manager.get_item(item_id) or {}
+        self._open_item_info_dialog(
+            str(item.get("TemplateId") or ""), item_id=item_id)
+
+    def _show_info_for_selected_catalog_row(self) -> None:
+        selected = self.catalog_tree.selection()
+        t = TRANSLATIONS[self.current_lang]
+        if not selected:
+            messagebox.showwarning(t["msg_no_selection_title"], t["msg_no_item_selected"])
+            return
+        values = self.catalog_tree.item(selected[0], "values")
+        if len(values) < 2:
+            return
+        self._open_item_info_dialog(str(values[1]))
+
+    def _open_item_info_dialog(self, template_id: str, item_id: str | None = None) -> None:
+        """Everything the editor knows about one item, in one read-only window.
+
+        Two callers with slightly different knowledge: from the catalog only the template is
+        known, from the inventory there is also a concrete item, which adds a section of its
+        own. Everything else is identical, so it is one window rather than two.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        key = str(template_id or "").strip().lower()
+        meta = self.game_item_meta_by_template_id.get(key) or {}
+        name = self._template_name_for_template_id(key) or key or t["info_none"]
+
+        win = tk.Toplevel(self.root)
+        win.title(t["info_title"])
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+
+        body = ttk.Frame(win, padding=14)
+        body.pack(fill="both", expand=True)
+
+        header = ttk.Frame(body)
+        header.pack(fill="x")
+        ttk.Label(header, text=name, style="InfoTitle.TLabel").pack(side="left")
+        category = " › ".join(
+            part for part in (meta.get("category_label"), meta.get("subcategory_label"))
+            if isinstance(part, str) and part.strip()
+        )
+        if category:
+            ttk.Label(header, text=category, style="Hint.TLabel").pack(side="right")
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(8, 10))
+
+        if not meta:
+            ttk.Label(body, text=t["info_no_game_data"], wraplength=520,
+                      style="Hint.TLabel", justify="left").pack(anchor="w")
+
+        facts = ttk.Frame(body)
+        facts.pack(fill="x")
+
+        def fact(row: int, column: int, label: str, value: str) -> None:
+            ttk.Label(facts, text=label, style="Hint.TLabel").grid(
+                row=row, column=column * 2, sticky="w", padx=(0, 10), pady=2)
+            ttk.Label(facts, text=value).grid(
+                row=row, column=column * 2 + 1, sticky="w", padx=(0, 34), pady=2)
+
+        price = meta.get("price")
+        fact(0, 0, t["info_value"],
+             t["info_credits"].format(amount=f"{int(price):,}".replace(",", " "))
+             if isinstance(price, (int, float)) and not isinstance(price, bool)
+             else t["info_none"])
+
+        width, height = meta.get("width"), meta.get("height")
+        max_width, max_height = meta.get("max_width"), meta.get("max_height")
+        if isinstance(width, int) and isinstance(height, int):
+            size_text = (
+                t["info_size_max"].format(width=width, height=height,
+                                          max_width=max_width, max_height=max_height)
+                if meta.get("is_resizable")
+                and isinstance(max_width, int) and isinstance(max_height, int)
+                else f"{width}x{height}"
+            )
+        else:
+            size_text = t["info_none"]
+        fact(0, 1, t["info_size"], size_text)
+
+        mass = meta.get("mass")
+        fact(1, 0, t["info_mass"],
+             _trim_float(float(mass))
+             if isinstance(mass, (int, float)) and not isinstance(mass, bool)
+             else t["info_none"])
+
+        capacity = meta.get("stack_capacity")
+        fact(1, 1, t["info_stack"],
+             t["info_stack_units"].format(capacity=int(capacity))
+             if isinstance(capacity, (int, float)) and capacity > 0
+             else t["info_none"])
+
+        # The two condition mechanisms are separate and never both present: charges have a
+        # per-template ceiling, wear is always the 0-4 scale.
+        max_durability = meta.get("max_durability")
+        if isinstance(max_durability, (int, float)) and max_durability > 0:
+            wear_text = t["info_wear_dur"].format(max=_trim_float(float(max_durability)))
+        elif meta.get("has_wear_condition"):
+            wear_text = t["info_wear_cond"]
+        else:
+            wear_text = t["info_none"]
+        fact(2, 0, t["info_wear"], wear_text)
+
+        if item_id:
+            ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+            ttk.Label(body, text=t["info_section_this_one"],
+                      style="InfoSection.TLabel").pack(anchor="w")
+            this_one = ttk.Frame(body)
+            this_one.pack(fill="x", pady=(4, 0))
+            line = []
+            parts = self._item_condition_parts(self.manager.get_item(item_id))
+            if parts:
+                line.append(self._format_condition_text(parts))
+            quantity = self._stack_quantity_of_item(self.manager.get_item(item_id))
+            if quantity:
+                line.append(f"×{quantity}")
+            line.append(self._item_location_text(item_id))
+            ttk.Label(this_one, text="   ".join(p for p in line if p)).pack(anchor="w")
+
+        self._build_recycling_section(body, key)
+        self._build_used_in_section(body, key)
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        footer = ttk.Frame(body)
+        footer.pack(fill="x")
+        ttk.Label(footer, text=t["info_template"], style="Hint.TLabel").pack(side="left")
+        ttk.Label(footer, text=key or t["info_none"]).pack(side="left", padx=(10, 0))
+
+        def copy_id() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(key)
+            messagebox.showinfo(t["info_title"], t["info_copied"], parent=win)
+
+        ttk.Button(footer, text=t["btn_close"], command=win.destroy).pack(side="right")
+        if key:
+            ttk.Button(footer, text=t["info_copy"], command=copy_id).pack(
+                side="right", padx=(0, 6))
+
+        win.bind("<Escape>", lambda _e: win.destroy())
+        self._center_over_root(win)
+        win.grab_set()
+        self.root.wait_window(win)
+
+    def _build_recycling_section(self, body: ttk.Frame, template_id: str) -> None:
+        """What the item turns into, one row per recycler stage, the player's own marked."""
+        t = TRANSLATIONS[self.current_lang]
+        rows = ((self.craft_meta or {}).get("recycling") or {}).get(template_id) or []
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        head = ttk.Frame(body)
+        head.pack(fill="x")
+        ttk.Label(head, text=t["info_section_recycle"],
+                  style="InfoSection.TLabel").pack(side="left")
+
+        if not rows:
+            ttk.Label(body, text=t["info_recycle_none"], wraplength=520,
+                      style="Hint.TLabel", justify="left").pack(anchor="w", pady=(4, 0))
+            return
+
+        level = self._recycler_level()
+        ttk.Label(
+            head,
+            text=(t["info_recycle_your_level"].format(level=level) if level
+                  else t["info_recycle_no_module"]),
+            style="Hint.TLabel",
+        ).pack(side="right")
+
+        # The stage that applies is the highest one at or below the player's level, because
+        # a built module can still run the recipes of the stages beneath it.
+        applies = None
+        if level:
+            eligible = [row for row in rows
+                        if isinstance(row.get("min_level"), int) and row["min_level"] <= level]
+            if eligible:
+                applies = max(eligible, key=lambda row: row["min_level"])
+
+        table = ttk.Frame(body)
+        table.pack(fill="x", pady=(4, 0))
+        for index, row in enumerate(rows):
+            outputs = ", ".join(
+                f"{part.get('count')}x "
+                f"{self._template_name_for_template_id(part.get('template_id')) or part.get('template_id')}"
+                for part in row.get("outputs") or []
+            )
+            current = row is applies
+            style = "TLabel" if current else "Hint.TLabel"
+            ttk.Label(table, text=(INFO_MARKER if current else "   ")
+                      + t["info_recycle_level"].format(level=row.get("min_level")),
+                      style=style).grid(row=index, column=0, sticky="w", padx=(0, 12))
+            ttk.Label(table, text=self._format_duration(row.get("duration_seconds")),
+                      style=style).grid(row=index, column=1, sticky="w", padx=(0, 12))
+            ttk.Label(table, text=outputs, style=style, wraplength=380,
+                      justify="left").grid(row=index, column=2, sticky="w")
+
+        if level and applies is None:
+            ttk.Label(body, text=t["info_recycle_above_you"], wraplength=520,
+                      style="Hint.TLabel", justify="left").pack(anchor="w", pady=(4, 0))
+
+    def _build_used_in_section(self, body: ttk.Frame, template_id: str) -> None:
+        """The recipes this item is an ingredient for - what you lose by scrapping it."""
+        t = TRANSLATIONS[self.current_lang]
+        rows = ((self.craft_meta or {}).get("used_in") or {}).get(template_id) or []
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        ttk.Label(body, text=t["info_section_used_in"],
+                  style="InfoSection.TLabel").pack(anchor="w")
+
+        if not rows:
+            ttk.Label(body, text=t["info_used_in_none"], style="Hint.TLabel").pack(
+                anchor="w", pady=(4, 0))
+            return
+
+        # Scrollable rather than truncated. An earlier version showed twelve rows and a
+        # "... and N more", which cut exactly the cases the section exists for: the eight
+        # templates over that limit are the crafting staples, and 9x19 ammo feeds 92 recipes.
+        # Hiding 80 of them to keep the window short answered the wrong question.
+        table = ttk.Frame(body)
+        table.pack(fill="both", expand=True, pady=(4, 0))
+        height = min(len(rows), INFO_USED_IN_ROWS)
+        tree = ttk.Treeview(table, columns=("makes", "count"), show="", height=height,
+                            selectmode="none")
+        tree.column("makes", width=340, anchor="w")
+        tree.column("count", width=60, anchor="e")
+        for row in rows:
+            # What the recipe produces, by name. Its EditorName is the fallback rather than
+            # the first choice: a third of them are internal identifiers like
+            # "Head_01_Model_05", which tells the reader nothing about what they would lose.
+            label = (
+                self._template_name_for_template_id(row.get("makes"))
+                or str(row.get("name") or "-")
+            )
+            tree.insert("", "end", values=(label, f"{row.get('count')}x"))
+        if len(rows) > height:
+            scroll = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scroll.set)
+            scroll.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+
+    def _ask_amount_and_target(
+        self,
+        title: str,
+        count_label: str,
+        count_default: int,
+        capacity: int | None,
+        same_container_id: str | None = None,
+        condition_max: float | None = None,
+        condition_field: str | None = None,
+        count_max: int = 9999,
+        hint: str | None = None,
+    ) -> tuple[int, int | None, float | None, str] | None:
+        """Count, stack size, starting condition and destination in one window.
+
+        The plain entries ask these one after another, which is fine when you accept the
+        defaults and tedious when you do not. Returns None when cancelled.
+
+        `condition_max` adds a wear field; leaving it at the maximum returns None for it,
+        because a pristine item carries no condition field at all - that absence *is* the
+        pristine state, and writing the maximum would only make the save larger.
+
+        `count_max` caps the first field. Splitting a stack needs a real ceiling - one unit
+        has to stay behind - where duplicating only needs a sane upper bound. `hint` replaces
+        the explanatory line for callers whose ceiling needs explaining.
+        """
+        t = TRANSLATIONS[self.current_lang]
+
+        targets: list[tuple[str, str]] = []
+        if same_container_id:
+            targets.append(("same", t["target_same_container"]))
+        targets.extend(self._placement_targets())
+        targets.append(("inbox", t["target_inbox"]))
+
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+        result: list[tuple[int, int | None, str] | None] = [None]
+
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text=count_label).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        count_var = tk.StringVar(value=str(count_default))
+        count_entry = ttk.Entry(body, textvariable=count_var, width=12, justify="center")
+        count_entry.grid(row=0, column=1, sticky="w", pady=(0, 6), padx=(10, 0))
+
+        row_index = 1
+
+        units_var: tk.StringVar | None = None
+        units_entry: ttk.Entry | None = None
+        if capacity:
+            ttk.Label(body, text=t["custom_units"].format(capacity=capacity)).grid(
+                row=row_index, column=0, sticky="w", pady=(0, 6))
+            units_var = tk.StringVar(value=str(capacity))
+            units_entry = ttk.Entry(body, textvariable=units_var, width=12, justify="center")
+            units_entry.grid(row=row_index, column=1, sticky="w", pady=(0, 6), padx=(10, 0))
+            row_index += 1
+
+        condition_var: tk.StringVar | None = None
+        condition_entry: ttk.Entry | None = None
+        if condition_max:
+            label = (
+                t["custom_repair_field_cond"].format(max=int(condition_max))
+                if condition_field == "Condition_d"
+                else t["custom_repair_field_dur"].format(max=_trim_float(condition_max))
+            )
+            ttk.Label(body, text=t["custom_condition"].format(field=label)).grid(
+                row=row_index, column=0, sticky="w", pady=(0, 6))
+            condition_var = tk.StringVar(value=_trim_float(condition_max))
+            condition_entry = ttk.Entry(body, textvariable=condition_var, width=12,
+                                        justify="center")
+            condition_entry.grid(row=row_index, column=1, sticky="w", pady=(0, 6), padx=(10, 0))
+            row_index += 1
+
+        ttk.Label(body, text=t["custom_target"]).grid(
+            row=row_index, column=0, sticky="w", pady=(6, 0))
+        combo = ttk.Combobox(body, state="readonly", width=48,
+                             values=[label for _cid, label in targets])
+        combo.current(0)
+        combo.grid(row=row_index + 1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+
+        # Which hint to show. An item that neither stacks nor wears has genuinely nothing
+        # else to set, and saying so beats leaving the window looking half-built.
+        if hint is not None:
+            hint_text = hint
+        elif condition_max:
+            hint_text = t["custom_condition_hint"]
+        elif capacity:
+            hint_text = t["msg_place_hint"]
+        else:
+            hint_text = t["custom_nothing_else"]
+        hint = ttk.Label(body, text=hint_text, wraplength=420,
+                         style="Hint.TLabel", justify="left")
+        hint.grid(row=row_index + 2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        row_index += 3
+
+        def read_int(var: tk.StringVar, entry: ttk.Entry, low: int, high: int) -> int | None:
+            """Refuses a value out of range and reddens the field, as the character tab does.
+            A popup per keystroke would be unusable, and silently clamping hides the refusal.
+            """
+            try:
+                value = int(var.get().strip())
+            except ValueError:
+                entry.configure(style="Invalid.TEntry")
+                return None
+            if not (low <= value <= high):
+                entry.configure(style="Invalid.TEntry")
+                messagebox.showerror(
+                    title, t["custom_value_range"].format(low=low, high=high), parent=win)
+                return None
+            entry.configure(style="TEntry")
+            return value
+
+        def confirm() -> None:
+            count = read_int(count_var, count_entry, 1, count_max)
+            if count is None:
+                return
+            units = None
+            if units_var is not None and units_entry is not None:
+                units = read_int(units_var, units_entry, 1, capacity or 1)
+                if units is None:
+                    return
+            condition = None
+            if condition_var is not None and condition_entry is not None:
+                try:
+                    value = float(condition_var.get().strip().replace(",", "."))
+                except ValueError:
+                    condition_entry.configure(style="Invalid.TEntry")
+                    return
+                if not (0 <= value <= condition_max):
+                    condition_entry.configure(style="Invalid.TEntry")
+                    messagebox.showerror(
+                        title,
+                        t["custom_value_range"].format(
+                            low=0, high=_trim_float(condition_max)),
+                        parent=win,
+                    )
+                    return
+                condition_entry.configure(style="TEntry")
+                # At the maximum the item stays pristine, which the game stores as no field
+                # at all rather than as the maximum value.
+                condition = None if value >= condition_max else value
+            result[0] = (count, units, condition, targets[combo.current()][0])
+            win.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=row_index, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right", padx=(0, 6))
+
+        body.columnconfigure(1, weight=1)
+        count_entry.focus_set()
+        win.bind("<Return>", lambda _e: confirm())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        self._center_over_root(win)
+        win.grab_set()
+        self.root.wait_window(win)
+        return result[0]
+
+    def _condition_fields_of(self, item_id: str) -> tuple[str, float] | None:
+        """Which condition field an item carries and its ceiling, or None for neither.
+
+        `DurabilityComponent_durability` counts charges and its maximum comes from the game
+        data; `Condition_d` is the 0-4 wear scale. An item has one or the other, and most
+        have neither until the game first writes one.
+        """
+        item = self.manager.get_item(item_id)
+        if not item:
+            return None
+        inner = item.get("AdditionalData", {}).get("_data", {})
+        if not isinstance(inner, dict):
+            return None
+        if "DurabilityComponent_durability" in inner:
+            ceiling = self._template_max_durability_for_item(item)
+            if ceiling is None:
+                own = inner.get("DurabilityComponent_md")
+                ceiling = float(own) if isinstance(own, (int, float)) and own > 0 else None
+            if ceiling is None:
+                return None
+            return "DurabilityComponent_durability", float(ceiling)
+        if "Condition_d" in inner:
+            return "Condition_d", 4.0
+        return None
+
+    def _open_set_condition_dialog(self, item_id: str) -> None:
+        t = TRANSLATIONS[self.current_lang]
+
+        # The row itself may carry nothing while an attachment does, so the whole subtree is
+        # searched before telling the user there is nothing to set.
+        subtree = self.manager.collect_subtree(item_id)
+        carriers = [member for member in subtree if self._condition_fields_of(member)]
+        if not carriers:
+            messagebox.showinfo(t["custom_title_repair"], t["custom_repair_none"],
+                                parent=self.root)
+            return
+
+        anchor = item_id if self._condition_fields_of(item_id) else carriers[0]
+        field, ceiling = self._condition_fields_of(anchor)  # type: ignore[misc]
+        field_label = (
+            t["custom_repair_field_cond"].format(max=int(ceiling))
+            if field == "Condition_d"
+            else t["custom_repair_field_dur"].format(max=_trim_float(ceiling))
+        )
+
+        win = tk.Toplevel(self.root)
+        win.title(t["custom_title_repair"])
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(
+            body,
+            text=t["custom_repair_prompt"].format(
+                name=self._template_name_for_item_id(anchor) or "?", field=field_label),
+            wraplength=420,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        value_var = tk.StringVar(value=_trim_float(ceiling))
+        entry = ttk.Entry(body, textvariable=value_var, width=14, justify="center")
+        entry.pack(anchor="w")
+
+        children_var = tk.BooleanVar(value=len(carriers) > 1)
+        if len(carriers) > 1:
+            ttk.Checkbutton(body, text=t["custom_repair_children"],
+                            variable=children_var).pack(anchor="w", pady=(10, 0))
+
+        def confirm() -> None:
+            try:
+                value = float(value_var.get().strip().replace(",", "."))
+            except ValueError:
+                entry.configure(style="Invalid.TEntry")
+                return
+            if not (0 <= value <= ceiling):
+                entry.configure(style="Invalid.TEntry")
+                messagebox.showerror(
+                    t["custom_title_repair"],
+                    t["custom_value_range"].format(low=0, high=_trim_float(ceiling)),
+                    parent=win,
+                )
+                return
+            entry.configure(style="TEntry")
+            win.destroy()
+            self._write_condition(
+                [anchor] if not children_var.get() else carriers, value)
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e", pady=(14, 0))
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right", padx=(0, 6))
+
+        entry.focus_set()
+        entry.select_range(0, "end")
+        win.bind("<Return>", lambda _e: confirm())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        self._center_over_root(win)
+        win.grab_set()
+        self.root.wait_window(win)
+
+    def _write_condition(self, item_ids: list[str], value: float) -> None:
+        """Sets the condition each item actually carries, clamped to that item's own ceiling.
+
+        A value valid for the item the dialog was opened on can exceed an attachment's
+        maximum - a rifle's 5 charges against a scope's 4 - so each item is capped by its
+        own. `DurabilityComponent_md` is lifted along with the value when it would otherwise
+        sit below it, because that field caps how far a repair kit can restore the item.
+        """
+        changed = 0
+        for item_id in item_ids:
+            fields = self._condition_fields_of(item_id)
+            if not fields:
+                continue
+            field, ceiling = fields
+            item = self.manager.get_item(item_id)
+            if not item:
+                continue
+            inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+            target = min(float(value), float(ceiling))
+            if inner.get(field) == target:
+                continue
+            inner[field] = target
+            if field == "DurabilityComponent_durability":
+                current_md = inner.get("DurabilityComponent_md")
+                if isinstance(current_md, (int, float)) and current_md < target:
+                    inner["DurabilityComponent_md"] = target
+            changed += 1
+
+        if not changed:
+            return
+        t = TRANSLATIONS[self.current_lang]
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        self._mark_pending_changes(t["status_repaired_custom"].format(count=changed))
+
+    def _center_over_root(self, win: tk.Toplevel) -> None:
+        """Puts a dialog over the main window instead of at the screen's top left."""
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - win.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_height()) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    # --- Restoring a backup -------------------------------------------------------------
+
+    def _open_restore_backup_dialog(self) -> None:
+        """Puts a timestamped backup back in place of the save.
+
+        The editor has written one on every apply since it existed, but getting one back
+        meant renaming files in Explorer. The current save is copied aside first, so this is
+        as reversible as everything else here.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        backups = list_backups(self.manager.backup_dir)
+        if not backups:
+            messagebox.showinfo(t["restore_title"], t["restore_none"], parent=self.root)
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title(t["restore_title"])
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text=t["restore_prompt"]).pack(anchor="w", pady=(0, 8))
+
+        tree_wrap = ttk.Frame(body)
+        tree_wrap.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(tree_wrap, orient="vertical")
+        scroll.pack(side="right", fill="y")
+        tree = ttk.Treeview(
+            tree_wrap,
+            columns=("when", "label", "size"),
+            show="headings",
+            selectmode="browse",
+            height=12,
+            yscrollcommand=scroll.set,
+        )
+        scroll.configure(command=tree.yview)
+        tree.pack(side="left", fill="both", expand=True)
+        tree.heading("when", text=t["restore_col_when"])
+        tree.heading("label", text=t["restore_col_label"])
+        tree.heading("size", text=t["restore_col_size"])
+        tree.column("when", width=170, anchor="w")
+        tree.column("label", width=170, anchor="w")
+        tree.column("size", width=100, anchor="e")
+
+        rows: dict[str, Path] = {}
+        for entry in backups:
+            row_id = tree.insert("", "end", values=(
+                entry["taken_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                entry["label"],
+                f"{entry['size'] / 1024:,.0f} KB".replace(",", " "),
+            ))
+            rows[row_id] = entry["path"]
+        first = tree.get_children("")
+        if first:
+            tree.selection_set(first[0])
+
+        ttk.Label(body, text=t["restore_hint"], wraplength=470, style="Hint.TLabel",
+                  justify="left").pack(anchor="w", pady=(10, 0))
+
+        def confirm() -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            chosen = rows[selection[0]]
+            if self.has_pending_changes and not messagebox.askyesno(
+                    t["restore_title"], t["restore_pending"], parent=win):
+                return
+            if not messagebox.askyesno(
+                    t["restore_title"],
+                    t["restore_confirm"].format(name=chosen.name),
+                    parent=win):
+                return
+            win.destroy()
+            self._restore_backup(chosen)
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e", pady=(14, 0))
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text=t["btn_restore"], command=confirm).pack(side="right", padx=(0, 6))
+
+        tree.bind("<Double-1>", lambda _e: confirm())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        self._center_over_root(win)
+        win.grab_set()
+        self.root.wait_window(win)
+
+    def _restore_backup(self, backup_path: Path) -> None:
+        t = TRANSLATIONS[self.current_lang]
+        try:
+            # Through save() rather than a plain copy, so the safety copy lands in the same
+            # folder under the same naming scheme and is pruned with the rest.
+            safety = self.manager.save(backup_name="before_restore")
+            restore_backup(Path(self.manager.save_path), backup_path)
+            self.manager.reload_from_disk()
+        except Exception as exc:
+            messagebox.showerror(
+                t["restore_title"],
+                t["msg_restore_failed"].format(exc=exc),
+                parent=self.root,
+            )
+            return
+
+        # Same refresh sequence as discarding: every view holds data from the old file.
+        current_scope = self.scope_var.get()
+        self._load_scope_options()
+        if current_scope in self.scope_labels:
+            self.scope_var.set(current_scope)
+            self._populate_scope_view()
+        self._refresh_mailbox()
+        self._refresh_char_tab()
+        self._refresh_quests_tree()
+        # Offer edits from before the restore describe a file that is no longer on disk.
+        self.shop_offer_undo = {}
+        self._clear_pending_changes(t["status_restored"].format(
+            name=backup_path.name, backup=safety.name if safety else "-"))
 
     def _delete_selected_items(self) -> None:
         """Deletes the selected row - an item with its attachments, or a single attachment

@@ -96,6 +96,65 @@ def prune_backups(
     return removed
 
 
+def list_backups(backup_dir: Path) -> List[Dict[str, Any]]:
+    """The backups this editor wrote, newest first.
+
+    Same name filter as `prune_backups`: a file the editor did not name is not offered for
+    restoring, because nothing is known about what it holds. Each entry carries the parsed
+    timestamp and the label from the name - `manual_apply`, `before_restore` - so the list
+    can say why a backup exists without opening it.
+    """
+    if not backup_dir.is_dir():
+        return []
+
+    found: List[Dict[str, Any]] = []
+    for path in backup_dir.glob("offline_*.save"):
+        order = _backup_order(path)
+        if order is None:
+            continue
+        match = _BACKUP_NAME.match(path.name)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        found.append({
+            "path": path,
+            "name": path.name,
+            "taken_at": order[0],
+            "label": match.group(2) if match else "",
+            "size": size,
+        })
+
+    found.sort(key=lambda row: (row["taken_at"], row["name"]), reverse=True)
+    return found
+
+
+def restore_backup(save_path: Path, backup_path: Path) -> None:
+    """Copies a backup over the save file.
+
+    Deliberately does not take a backup of the current state itself - the caller does that
+    through `save()`, so the copy lands in the same folder under the same naming scheme and
+    is pruned along with the rest. Doing it here would either duplicate that logic or
+    bypass the pruning.
+    """
+    backup_path = Path(backup_path)
+    save_path = Path(save_path)
+    if not backup_path.is_file():
+        raise FileNotFoundError(f"Backup not found: {backup_path}")
+    if backup_path.resolve() == save_path.resolve():
+        raise ValueError("Backup and save are the same file")
+
+    # Reject a file that is not a save before overwriting anything. A truncated or
+    # unrelated file would otherwise replace a working save and only fail on the reload,
+    # by which point the original is gone.
+    with backup_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict) or "AccountDto" not in payload:
+        raise ValueError(f"{backup_path.name} does not look like a Cargo Hunters save")
+
+    shutil.copyfile(backup_path, save_path)
+
+
 # --- Container geometry --------------------------------------------------------------
 # An item's Position is the game's `Cell {int I, int J}` and a size is its
 # `ItemSize {int Width, int Height}`, with **Width on I and Height on J**. Measured rather
@@ -539,6 +598,140 @@ class SaveDataManager:
                 del self.children_map[parent_id]
 
         return doomed
+
+    # --- Moving and splitting -----------------------------------------------------
+
+    def move_item(
+        self,
+        item_id: str,
+        parent_id: str,
+        position: Optional[Tuple[int, int]] = None,
+    ) -> List[str]:
+        """Moves an item and everything attached to it into another container.
+
+        Returns the ids that moved, the item itself first, or an empty list when the move
+        was refused. Refused for an unknown id, for the structural containers
+        `is_structural` names, for an unknown destination, and for a destination inside the
+        item's own subtree - a backpack cannot be put into itself, and the resulting cycle
+        would strand every item under it.
+
+        Three things have to travel together, and only the first is obvious:
+
+        - `ParentId` and `Position`, on the moved item alone. Attachments hang off the item,
+          not off the container, so their own ParentId is already right.
+        - **The list the dicts live in.** An item is stored in one of three lists depending
+          on its section, so moving from the warehouse into a carried backpack means moving
+          every dict of the subtree from `InventoryDto` into `EquipmentDto` - the ParentId
+          alone would leave the game looking for it in the wrong place.
+        - The equipment slot, if the item was in one. A slot entry exists only while it is
+          occupied, so an item that leaves the character leaves its slot behind, the same
+          way `delete_item` empties it.
+
+        The vacated cells are deliberately left as they are. A container's slots are fixed
+        compartments, so a freed one is simply empty; renumbering the neighbours would move
+        items the user never touched.
+        """
+        root = str(item_id)
+        target_parent = str(parent_id)
+        if root not in self.item_tree or self.is_structural(root):
+            return []
+        if target_parent not in self.item_tree and target_parent not in set(
+            self.section_roots.values()
+        ):
+            return []
+
+        moving = self.collect_subtree(root)
+        if target_parent in set(moving):
+            return []
+
+        target_origin = self.origin_for_parent(target_parent)
+        target_list = self._origin_list(target_origin)
+        if target_list is None:
+            return []
+
+        # One pass per source list, because a subtree could in principle span two of them.
+        # The dicts themselves are carried over rather than rebuilt: every other reference
+        # to them - item_tree above all - has to keep pointing at the same object.
+        relocating = {
+            i for i in moving if self.item_origin.get(i) != target_origin
+        }
+        if relocating:
+            carried: List[dict] = []
+            for origin in {self.item_origin.get(i) for i in relocating}:
+                origin_list = self._origin_list(origin)
+                if origin_list is None:
+                    continue
+                keep: List[dict] = []
+                for entry in origin_list:
+                    if isinstance(entry, dict) and str(entry.get("Id")) in relocating:
+                        carried.append(entry)
+                    else:
+                        keep.append(entry)
+                origin_list[:] = keep
+            target_list.extend(carried)
+            for i in relocating:
+                self.item_origin[i] = target_origin
+
+        item = self.item_tree[root]
+        old_parent = str(item.get("ParentId") or "")
+        item["ParentId"] = target_parent
+        if position is not None:
+            item["Position"] = {"I": int(position[0]), "J": int(position[1])}
+
+        siblings = self.children_map.get(old_parent)
+        if siblings is not None:
+            siblings[:] = [child for child in siblings if child != root]
+            if not siblings:
+                del self.children_map[old_parent]
+        self.children_map.setdefault(target_parent, []).append(root)
+
+        gone = set(moving)
+        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo")
+        if isinstance(slots, list):
+            slots[:] = [
+                slot for slot in slots
+                if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
+            ]
+
+        return moving
+
+    def split_stack(
+        self,
+        item_id: str,
+        amount: int,
+        parent_id: Optional[str] = None,
+        position: Optional[Tuple[int, int]] = None,
+    ) -> Optional[dict]:
+        """Takes `amount` units off a stack into a second stack, and returns the new item.
+
+        A stack is one item carrying `StackableComponent_quantity`, not one item per unit,
+        so splitting is arithmetic on that field plus a copy of the item to hold the part
+        that left. The copy keeps everything else the original had - its size, its rotation -
+        because it is the same kind of item.
+
+        Refused unless the stack really holds more than `amount`: taking all of it is a move,
+        not a split, and would leave an empty stack behind that the game has no use for.
+        """
+        item = self.get_item(item_id)
+        if not item or not isinstance(amount, int) or amount < 1:
+            return None
+
+        inner = item.get("AdditionalData", {}).get("_data", {})
+        quantity = inner.get("StackableComponent_quantity") if isinstance(inner, dict) else None
+        if not isinstance(quantity, int) or isinstance(quantity, bool):
+            return None
+        if amount >= quantity:
+            return None
+
+        clone = self.duplicate_item(item_id, parent_id=parent_id, position=position)
+        if clone is None:
+            return None
+
+        clone.setdefault("AdditionalData", {}).setdefault("_data", {})[
+            "StackableComponent_quantity"
+        ] = amount
+        inner["StackableComponent_quantity"] = quantity - amount
+        return clone
 
     # --- Trader stock -------------------------------------------------------------
     # Shop offers live in AccountShops / AccountPricelists, outside the three item lists,
