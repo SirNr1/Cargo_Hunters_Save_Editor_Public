@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tkinter as tk
 import webbrowser
+from collections import Counter
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
@@ -12,6 +13,8 @@ from core_utils import (
     BACKUP_KEEP_DEFAULT,
     SaveDataManager,
     container_cells,
+    diff_is_empty,
+    diff_saves,
     find_placement,
     list_backups,
     restore_backup,
@@ -155,6 +158,7 @@ TRANSLATIONS = {
         "lbl_scope": "Scope:",
         "lbl_search": "Search:",
         "btn_search": "Search",
+        "status_search": "Search: '{query}' - {count} matching items",
         "btn_delete_mail": "Delete selected letter",
         "lbl_category": "Category:",
         "lbl_subcategory": "SubCategory:",
@@ -297,7 +301,6 @@ TRANSLATIONS = {
         "msg_delete_revert_hint": "Discard Changes still undoes this until you apply.",
         "msg_delete_structural": "This row is a storage container of the save itself, not an item, and cannot be deleted.",
         "status_items_deleted": "Deleted {count} item(s) (not saved yet)",
-        "msg_search_empty": "Please enter a search query.",
         "msg_skill_level_range": "Invalid level. This skill goes from 0 to {max_level}.",
         "msg_trader_level_range": "Invalid level. A trader goes from {min_level} to {max_level}.",
         "btn_level_max": "MAX",
@@ -313,6 +316,29 @@ TRANSLATIONS = {
         "counters_hint": "Read-only: the account's own tally, kept by the game. Nothing here is written back.",
         "counters_empty": "This save carries no counters.",
         "tab_quests": "Quests",
+        "tab_crafting": "Crafting",
+        "craft_count": "{modules} workbenches, {recipes} recipes, {ready} ready to craft",
+        "craft_no_data": "No crafting data. Use Refresh Names from Game to read it.",
+        "craft_module_row": "{name}  -  built {level} of {max}  ({count} recipes)",
+        "craft_level_row": "Needs level {level}  ({count})",
+        "craft_col_recipe": "Recipe",
+        "craft_col_needs": "Takes",
+        "craft_col_time": "Time",
+        "craft_col_state": "Status",
+        "craft_state_ready": "ready",
+        "craft_state_missing": "ingredients short",
+        "craft_state_locked": "level too low",
+        "craft_state_unbuildable": "not in the game yet",
+        "craft_detail_makes": "Makes",
+        "craft_detail_needs": "Takes (in store / needed)",
+        "craft_detail_where": "Workbench",
+        "craft_detail_where_value": "{name}, needs level {needed} - built {level} of {max}",
+        "craft_detail_time": "Time",
+        "craft_detail_internal": "Internal name",
+        "craft_hint": "Read-only: the editor does not craft. Recycling is not listed here - it "
+                      "is the same recipe list seen from the item, and the item info window "
+                      "shows it. A recipe marked as not in the game asks for a workbench level "
+                      "the game has no build step for.",
         "col_quest_status": "Status",
         "col_quest_flags": "Flags",
         "col_quest_sender": "Sender",
@@ -341,6 +367,30 @@ TRANSLATIONS = {
         "restore_title": "Restore a backup",
         "restore_prompt": "Which backup should replace your save?",
         "restore_hint": "The current save is copied aside first, so this is undoable too. Nothing in the backups folder is deleted.",
+        "diff_apply_title": "Confirm changes",
+        "diff_apply_intro": "This is what will be written to the save file. A timestamped "
+                            "backup of the current file is made first.",
+        "diff_restore_title": "Confirm restore",
+        "diff_restore_intro": "This is what putting {name} back would change in your current "
+                              "save. The current file is copied aside first.",
+        "diff_compare_title": "Compare with backup",
+        "diff_compare_intro": "How {name} differs from the save on disk. Nothing is written.",
+        "diff_btn_compare": "Compare...",
+        "diff_intro": "The difference between the two saves.",
+        "diff_col_what": "What",
+        "diff_col_before": "Before",
+        "diff_col_after": "After",
+        "diff_added": "New items ({count})",
+        "diff_removed": "Removed items ({count})",
+        "diff_changed": "Changed items ({count})",
+        "diff_fields": "Other changes ({count})",
+        "diff_more": "... and {count} more",
+        "diff_nothing": "No differences.",
+        "diff_absent": "- not set -",
+        "diff_unreadable": "The save on disk cannot be read, so the changes cannot be listed. "
+                           "Write them anyway?",
+        "diff_unreadable_compare": "One of the two files cannot be read as a save, so there is "
+                                   "nothing to compare.",
         "restore_col_when": "Taken",
         "restore_col_label": "Reason",
         "restore_col_size": "Size",
@@ -387,6 +437,56 @@ TRANSLATIONS = {
                                "quantity can be split, and this one holds a single unit.",
         "split_no_space": "No free space in {target} for the second stack.",
         "status_split": "Split {amount} of {quantity} units off (not saved yet)",
+        "ctx_attachments": "Attachments...",
+        "attach_title": "Attachments",
+        "attach_for": "Attachments for {name}",
+        "attach_nothing": "This item has no attachment points, and none of your items takes "
+                          "it. Only weapons, weapon parts, body parts and helmets have slots.",
+        "attach_own_slots": "Slots on this item",
+        "attach_hosts": "Your items this one fits",
+        "attach_col_slot": "Slot",
+        "attach_col_fitted": "Fitted part",
+        "attach_col_host": "Item",
+        "attach_col_where": "Location",
+        "attach_free": "- free -",
+        "attach_required": "required",
+        "attach_btn_fit": "Fit part...",
+        "attach_btn_detach": "Take off...",
+        "attach_btn_fit_here": "Fit into this slot",
+        "attach_select_slot": "Select a slot first.",
+        "attach_select_host": "Select an item first.",
+        "attach_slot_taken": "That slot already holds {name}. Take it off first.",
+        "attach_none_owned": "You own no part that fits {slot}. The item info window lists "
+                             "what the game allows there.",
+        "attach_pick_title": "Choose a part",
+        "attach_pick_prompt": "Which of your parts goes into {slot}?",
+        "attach_failed": "The part could not be fitted.",
+        "attach_hint": "A fitted part records its slot, and the parts already on it come "
+                       "along. The game works out how much room the assembled item needs on "
+                       "its own, and moves anything it cannot place into your mailbox - so "
+                       "leave space around a weapon you are building up.",
+        "attach_cramped": "{name} has no room left to grow where it stands. Tested in play: "
+                          "the game keeps the weapon where it is and puts the part it could "
+                          "not fit - {part} - into your mailbox. Move the weapon somewhere "
+                          "with space around it first, or fit the part anyway and look in the "
+                          "mailbox.\n\nFit it anyway?",
+        "status_attached": "Fitted {part} into {slot} (not saved yet)",
+        "ctx_spawn_preset": "Spawn Assembled...",
+        "preset_title": "Assembled item",
+        "preset_none": "The game ships no assembled configuration for this item. Only the 53 "
+                       "firearm presets have one; everything else is spawned as the bare item.",
+        "preset_prompt": "The game ships more than one configuration for this weapon.",
+        "preset_col_variant": "Configuration",
+        "preset_col_parts": "Parts fitted",
+        "preset_no_space": "No free space for the weapon in the container you picked.",
+        "preset_partial": "{skipped} part(s) were left out: their slot was already taken.",
+        "status_preset": "Spawned {name} with {parts} part(s) fitted (not saved yet)",
+        "preset_outgrown": "This configuration of {name} grows to about {grown}, and the game "
+                           "data says the weapon only grows to {ceiling}. Tested in play: the "
+                           "game refuses such an item wherever it is put and delivers it to "
+                           "your mailbox in pieces - no item in a real save sits at its own "
+                           "maximum. 17 of the 53 configurations are like this.\n\nSpawn it "
+                           "anyway?",
         "ctx_info": "Item Info",
         "info_title": "Item info",
         "info_value": "Value",
@@ -421,14 +521,25 @@ TRANSLATIONS = {
         "info_no_game_data": "No game data for this template. Run Refresh Names from Game.",
         "info_hours": "{hours} h",
         "info_minutes": "{minutes} min",
+        "info_seconds": "{seconds} s",
+        "info_section_ammo": "Ammunition",
+        "info_ammo_takes": "This weapon takes",
+        "info_ammo_fits": "Fits these weapons",
+        "info_ammo_none": "No weapon in the game data takes this cartridge.",
+        "info_section_mods": "Attachments",
+        "info_mods_none": "This item has no attachment points.",
+        "info_mods_fitted": "fitted by default",
+        "info_mods_required": "required",
+        "info_section_fits_on": "Fits on",
+        "info_fits_on_none": "Nothing in the game data has a slot for this item.",
+        "info_fits_on_row": "{name}   {slot}",
+        "info_fits_on_more": "... and {count} more",
+        "info_slot_fallback": "Slot {type}",
         "status_repaired_custom": "Set condition on {count} item(s) (not saved yet)",
-        "msg_select_search_result": "Select a search result first.",
         "msg_select_letter": "Please select a letter first.",
         "msg_err_resolve_letter": "Could not resolve selected letter index.",
         "msg_err_letter_out_of_range": "Selected letter is out of range.",
         "msg_err_save_failed": "Failed to save changes:\n{exc}",
-        "search_results_title": "Search Results ({count})",
-        "search_found_count": "Found {count} matching items",
         "col_id": "Id",
         "col_condition": "Condition",
         "btn_ok": "OK",
@@ -467,6 +578,7 @@ TRANSLATIONS = {
         "lbl_scope": "Bereich:",
         "lbl_search": "Suche:",
         "btn_search": "Suchen",
+        "status_search": "Suche: '{query}' - {count} Treffer",
         "btn_delete_mail": "Ausgewählten Brief löschen",
         "lbl_category": "Kategorie:",
         "lbl_subcategory": "Unterkategorie:",
@@ -609,7 +721,6 @@ TRANSLATIONS = {
         "msg_delete_revert_hint": "Bis zum Anwenden macht Änderungen verwerfen das wieder rückgängig.",
         "msg_delete_structural": "Diese Zeile ist ein Lagerbehälter des Saves selbst und kein Gegenstand. Sie lässt sich nicht löschen.",
         "status_items_deleted": "{count} Gegenstand/Gegenstände gelöscht (noch nicht gespeichert)",
-        "msg_search_empty": "Bitte geben Sie einen Suchbegriff ein.",
         "msg_skill_level_range": "Ungültige Stufe. Dieser Skill geht von 0 bis {max_level}.",
         "msg_trader_level_range": "Ungültige Stufe. Ein Händler geht von {min_level} bis {max_level}.",
         "btn_level_max": "MAX",
@@ -625,6 +736,29 @@ TRANSLATIONS = {
         "counters_hint": "Nur zur Ansicht: die Zähler des Spiels. Hier wird nichts zurückgeschrieben.",
         "counters_empty": "Dieser Spielstand enthält keine Zähler.",
         "tab_quests": "Quests",
+        "tab_crafting": "Herstellung",
+        "craft_count": "{modules} Werkbänke, {recipes} Rezepte, {ready} sofort herstellbar",
+        "craft_no_data": "Keine Herstellungsdaten. Bitte Namen aus dem Spiel aktualisieren.",
+        "craft_module_row": "{name}  —  Stufe {level} von {max}  ({count} Rezepte)",
+        "craft_level_row": "Braucht Stufe {level}  ({count})",
+        "craft_col_recipe": "Rezept",
+        "craft_col_needs": "Braucht",
+        "craft_col_time": "Dauer",
+        "craft_col_state": "Status",
+        "craft_state_ready": "machbar",
+        "craft_state_missing": "Zutaten fehlen",
+        "craft_state_locked": "Stufe zu niedrig",
+        "craft_state_unbuildable": "noch nicht im Spiel",
+        "craft_detail_makes": "Ergibt",
+        "craft_detail_needs": "Braucht (im Lager / nötig)",
+        "craft_detail_where": "Werkbank",
+        "craft_detail_where_value": "{name}, braucht Stufe {needed} — gebaut {level} von {max}",
+        "craft_detail_time": "Dauer",
+        "craft_detail_internal": "Interner Name",
+        "craft_hint": "Nur zur Ansicht — der Editor stellt nichts her. Das Recyceln steht "
+                      "nicht hier: es ist dieselbe Rezeptliste von der Gegenstandsseite, und "
+                      "das Infofenster zeigt sie. „Noch nicht im Spiel“ heißt, das Rezept "
+                      "verlangt eine Werkbankstufe, für die es keinen Bauschritt gibt.",
         "col_quest_status": "Status",
         "col_quest_flags": "Merkmale",
         "col_quest_sender": "Absender",
@@ -653,6 +787,32 @@ TRANSLATIONS = {
         "restore_title": "Backup zurückspielen",
         "restore_prompt": "Welches Backup soll deinen Spielstand ersetzen?",
         "restore_hint": "Der aktuelle Spielstand wird vorher weggesichert, das hier ist also ebenfalls umkehrbar. Im Backup-Ordner wird nichts gelöscht.",
+        "diff_apply_title": "Änderungen bestätigen",
+        "diff_apply_intro": "Das wird in die Spielstanddatei geschrieben. Vorher entsteht eine "
+                            "Sicherung der aktuellen Datei mit Zeitstempel.",
+        "diff_restore_title": "Zurückspielen bestätigen",
+        "diff_restore_intro": "Das würde sich in Ihrem aktuellen Spielstand ändern, wenn "
+                              "{name} zurückgespielt wird. Die aktuelle Datei wird vorher "
+                              "weggesichert.",
+        "diff_compare_title": "Mit Sicherung vergleichen",
+        "diff_compare_intro": "Wie sich {name} von der Datei auf der Platte unterscheidet. Es "
+                              "wird nichts geschrieben.",
+        "diff_btn_compare": "Vergleichen...",
+        "diff_intro": "Der Unterschied zwischen den beiden Spielständen.",
+        "diff_col_what": "Was",
+        "diff_col_before": "Vorher",
+        "diff_col_after": "Nachher",
+        "diff_added": "Neue Gegenstände ({count})",
+        "diff_removed": "Entfernte Gegenstände ({count})",
+        "diff_changed": "Geänderte Gegenstände ({count})",
+        "diff_fields": "Weitere Änderungen ({count})",
+        "diff_more": "... und {count} weitere",
+        "diff_nothing": "Keine Unterschiede.",
+        "diff_absent": "— nicht gesetzt —",
+        "diff_unreadable": "Der Spielstand auf der Platte ist nicht lesbar, die Änderungen "
+                           "lassen sich also nicht auflisten. Trotzdem schreiben?",
+        "diff_unreadable_compare": "Eine der beiden Dateien ist nicht als Spielstand lesbar, "
+                                   "es gibt also nichts zu vergleichen.",
         "restore_col_when": "Erstellt",
         "restore_col_label": "Anlass",
         "restore_col_size": "Größe",
@@ -702,6 +862,58 @@ TRANSLATIONS = {
                                "Stück.",
         "split_no_space": "In {target} ist kein Platz für den zweiten Stapel.",
         "status_split": "{amount} von {quantity} Stück abgetrennt (noch nicht gespeichert)",
+        "ctx_attachments": "Anbauteile...",
+        "attach_title": "Anbauteile",
+        "attach_for": "Anbauteile für {name}",
+        "attach_nothing": "Dieser Gegenstand hat keine Aufnahmen, und keiner Ihrer "
+                          "Gegenstände nimmt ihn auf. Slots haben nur Waffen, Waffenteile, "
+                          "Körperteile und Helme.",
+        "attach_own_slots": "Aufnahmen an diesem Gegenstand",
+        "attach_hosts": "Ihre Gegenstände, auf die dieser passt",
+        "attach_col_slot": "Aufnahme",
+        "attach_col_fitted": "Verbautes Teil",
+        "attach_col_host": "Gegenstand",
+        "attach_col_where": "Ort",
+        "attach_free": "— frei —",
+        "attach_required": "erforderlich",
+        "attach_btn_fit": "Teil montieren...",
+        "attach_btn_detach": "Abnehmen...",
+        "attach_btn_fit_here": "In diese Aufnahme montieren",
+        "attach_select_slot": "Bitte zuerst eine Aufnahme auswählen.",
+        "attach_select_host": "Bitte zuerst einen Gegenstand auswählen.",
+        "attach_slot_taken": "In dieser Aufnahme sitzt schon {name}. Nehmen Sie es zuerst ab.",
+        "attach_none_owned": "Sie besitzen kein Teil, das in {slot} passt. Das Infofenster "
+                             "zeigt, was das Spiel dort erlaubt.",
+        "attach_pick_title": "Teil auswählen",
+        "attach_pick_prompt": "Welches Ihrer Teile soll in {slot}?",
+        "attach_failed": "Das Teil konnte nicht montiert werden.",
+        "attach_hint": "Ein montiertes Teil merkt sich seine Aufnahme, und die Teile daran "
+                       "kommen mit. Wie viel Platz der zusammengebaute Gegenstand braucht, "
+                       "rechnet das Spiel selbst aus — was es nicht platzieren kann, landet in "
+                       "deinem Postfach. Lass um eine Waffe, die du aufbaust, also Platz.",
+        "attach_cramped": "{name} hat an seinem Platz keinen Raum zum Wachsen. Im Spiel "
+                          "getestet: die Waffe bleibt liegen, und das Teil, das nicht mehr "
+                          "hineinpasst — {part} — landet in deinem Postfach. Verschiebe die "
+                          "Waffe erst dorthin, wo Platz drumherum ist, oder montiere trotzdem "
+                          "und sieh ins Postfach.\n\nTrotzdem montieren?",
+        "status_attached": "{part} in {slot} montiert (noch nicht gespeichert)",
+        "ctx_spawn_preset": "Fertig aufgebaut spawnen...",
+        "preset_title": "Fertig aufgebauter Gegenstand",
+        "preset_none": "Für diesen Gegenstand liefert das Spiel keine fertige Konfiguration. "
+                       "Nur die 53 Schusswaffen-Presets haben eine; alles andere entsteht als "
+                       "nackter Gegenstand.",
+        "preset_prompt": "Das Spiel liefert für diese Waffe mehr als eine Konfiguration.",
+        "preset_col_variant": "Konfiguration",
+        "preset_col_parts": "Verbaute Teile",
+        "preset_no_space": "Im gewählten Behälter ist kein Platz für die Waffe.",
+        "preset_partial": "{skipped} Teil(e) blieben weg: ihre Aufnahme war schon belegt.",
+        "status_preset": "{name} mit {parts} Teil(en) gespawnt (noch nicht gespeichert)",
+        "preset_outgrown": "Diese Konfiguration der {name} wächst auf etwa {grown}, und laut "
+                           "Spieldaten wächst die Waffe nur bis {ceiling}. Im Spiel getestet: "
+                           "das Spiel lehnt so einen Gegenstand überall ab und legt ihn in "
+                           "Einzelteilen in dein Postfach — kein Gegenstand in einem echten "
+                           "Spielstand steht auf seinem eigenen Maximum. 17 der 53 "
+                           "Konfigurationen sind so.\n\nTrotzdem spawnen?",
         "ctx_info": "Info zum Gegenstand",
         "info_title": "Gegenstandsinfo",
         "info_value": "Wert",
@@ -738,14 +950,25 @@ TRANSLATIONS = {
                              "aktualisieren aus.",
         "info_hours": "{hours} Std.",
         "info_minutes": "{minutes} Min.",
+        "info_seconds": "{seconds} Sek.",
+        "info_section_ammo": "Munition",
+        "info_ammo_takes": "Diese Waffe nimmt",
+        "info_ammo_fits": "Passt in diese Waffen",
+        "info_ammo_none": "Keine Waffe in den Spieldaten nimmt diese Patrone.",
+        "info_section_mods": "Anbauteile",
+        "info_mods_none": "Dieser Gegenstand hat keine Anbaupunkte.",
+        "info_mods_fitted": "standardmäßig verbaut",
+        "info_mods_required": "erforderlich",
+        "info_section_fits_on": "Passt an",
+        "info_fits_on_none": "Nichts in den Spieldaten hat einen Slot für diesen Gegenstand.",
+        "info_fits_on_row": "{name}   {slot}",
+        "info_fits_on_more": "... und {count} weitere",
+        "info_slot_fallback": "Slot {type}",
         "status_repaired_custom": "Zustand an {count} Gegenstand/Gegenständen gesetzt (noch nicht gespeichert)",
-        "msg_select_search_result": "Bitte wählen Sie zuerst ein Suchergebnis aus.",
         "msg_select_letter": "Bitte wählen Sie zuerst einen Brief aus.",
         "msg_err_resolve_letter": "Index des ausgewählten Briefs konnte nicht aufgelöst werden.",
         "msg_err_letter_out_of_range": "Ausgewählter Brief liegt außerhalb des Bereichs.",
         "msg_err_save_failed": "Änderungen konnten nicht gespeichert werden:\n{exc}",
-        "search_results_title": "Suchergebnisse ({count})",
-        "search_found_count": "Es wurden {count} übereinstimmende Gegenstände gefunden",
         "col_id": "Id",
         "col_condition": "Zustand",
         "btn_ok": "OK",
@@ -787,6 +1010,7 @@ TRANSLATIONS = {
         "lbl_scope": "Область:",
         "lbl_search": "Поиск:",
         "btn_search": "Найти",
+        "status_search": "Поиск: '{query}' - совпадений: {count}",
         "btn_delete_mail": "Удалить выбранное письмо",
         "lbl_category": "Категория:",
         "lbl_subcategory": "Подкатегория:",
@@ -929,7 +1153,6 @@ TRANSLATIONS = {
         "msg_delete_revert_hint": "До применения изменений «Отменить изменения» вернёт всё назад.",
         "msg_delete_structural": "Эта строка — контейнер самого сохранения, а не предмет. Её нельзя удалить.",
         "status_items_deleted": "Удалено предметов: {count} (ещё не сохранено)",
-        "msg_search_empty": "Пожалуйста, введите поисковый запрос.",
         "msg_skill_level_range": "Неверный уровень. У этого навыка диапазон 0-{max_level}.",
         "msg_trader_level_range": "Неверный уровень. У торговца диапазон {min_level}-{max_level}.",
         "btn_level_max": "МАКС",
@@ -945,6 +1168,29 @@ TRANSLATIONS = {
         "counters_hint": "Только для просмотра: счётчики игры. Здесь ничего не записывается.",
         "counters_empty": "В этом сохранении нет счётчиков.",
         "tab_quests": "Квесты",
+        "tab_crafting": "Крафт",
+        "craft_count": "Верстаков: {modules}, рецептов: {recipes}, готово к крафту: {ready}",
+        "craft_no_data": "Нет данных о крафте. Обновите названия из игры.",
+        "craft_module_row": "{name}  —  построено {level} из {max}  (рецептов: {count})",
+        "craft_level_row": "Нужен уровень {level}  ({count})",
+        "craft_col_recipe": "Рецепт",
+        "craft_col_needs": "Требует",
+        "craft_col_time": "Время",
+        "craft_col_state": "Статус",
+        "craft_state_ready": "готово",
+        "craft_state_missing": "не хватает",
+        "craft_state_locked": "уровень мал",
+        "craft_state_unbuildable": "ещё нет в игре",
+        "craft_detail_makes": "Даёт",
+        "craft_detail_needs": "Требует (в наличии / нужно)",
+        "craft_detail_where": "Верстак",
+        "craft_detail_where_value": "{name}, нужен уровень {needed} — построено {level} из {max}",
+        "craft_detail_time": "Время",
+        "craft_detail_internal": "Внутреннее имя",
+        "craft_hint": "Только просмотр: редактор не крафтит. Переработка здесь не показана — "
+                      "это тот же список рецептов со стороны предмета, и его показывает окно "
+                      "информации. «Ещё нет в игре» значит, что рецепт требует уровня "
+                      "верстака, для которого в игре нет шага постройки.",
         "col_quest_status": "Статус",
         "col_quest_flags": "Признаки",
         "col_quest_sender": "Отправитель",
@@ -973,6 +1219,30 @@ TRANSLATIONS = {
         "restore_title": "Восстановление из копии",
         "restore_prompt": "Какая копия должна заменить сохранение?",
         "restore_hint": "Текущее сохранение сначала копируется, так что действие обратимо. В папке копий ничего не удаляется.",
+        "diff_apply_title": "Подтверждение изменений",
+        "diff_apply_intro": "Это будет записано в файл сохранения. Сначала создаётся копия "
+                            "текущего файла с отметкой времени.",
+        "diff_restore_title": "Подтверждение восстановления",
+        "diff_restore_intro": "Вот что изменится в текущем сохранении, если вернуть {name}. "
+                              "Текущий файл сначала копируется.",
+        "diff_compare_title": "Сравнение с копией",
+        "diff_compare_intro": "Чем {name} отличается от файла на диске. Ничего не пишется.",
+        "diff_btn_compare": "Сравнить...",
+        "diff_intro": "Разница между двумя сохранениями.",
+        "diff_col_what": "Что",
+        "diff_col_before": "До",
+        "diff_col_after": "После",
+        "diff_added": "Новые предметы ({count})",
+        "diff_removed": "Удалённые предметы ({count})",
+        "diff_changed": "Изменённые предметы ({count})",
+        "diff_fields": "Прочие изменения ({count})",
+        "diff_more": "... и ещё {count}",
+        "diff_nothing": "Различий нет.",
+        "diff_absent": "— не задано —",
+        "diff_unreadable": "Сохранение на диске не читается, перечислить изменения нельзя. "
+                           "Всё равно записать?",
+        "diff_unreadable_compare": "Один из двух файлов не читается как сохранение, сравнивать "
+                                   "нечего.",
         "restore_col_when": "Создана",
         "restore_col_label": "Повод",
         "restore_col_size": "Размер",
@@ -1019,6 +1289,57 @@ TRANSLATIONS = {
                                "количество, а здесь всего одна штука.",
         "split_no_space": "В {target} нет места для второго стака.",
         "status_split": "Отделено {amount} из {quantity} шт. (ещё не сохранено)",
+        "ctx_attachments": "Навесное...",
+        "attach_title": "Навесное оборудование",
+        "attach_for": "Навесное для {name}",
+        "attach_nothing": "У этого предмета нет посадочных мест, и ни один из ваших предметов "
+                          "его не принимает. Слоты есть только у оружия, частей оружия, частей "
+                          "тела и шлемов.",
+        "attach_own_slots": "Посадочные места этого предмета",
+        "attach_hosts": "Ваши предметы, на которые он подходит",
+        "attach_col_slot": "Слот",
+        "attach_col_fitted": "Установленная часть",
+        "attach_col_host": "Предмет",
+        "attach_col_where": "Место",
+        "attach_free": "— свободно —",
+        "attach_required": "обязательно",
+        "attach_btn_fit": "Установить часть...",
+        "attach_btn_detach": "Снять...",
+        "attach_btn_fit_here": "Установить в этот слот",
+        "attach_select_slot": "Сначала выберите слот.",
+        "attach_select_host": "Сначала выберите предмет.",
+        "attach_slot_taken": "В этом слоте уже стоит {name}. Сначала снимите её.",
+        "attach_none_owned": "У вас нет части, подходящей в {slot}. Окно информации "
+                             "показывает, что игра там допускает.",
+        "attach_pick_title": "Выбор части",
+        "attach_pick_prompt": "Какую из ваших частей поставить в {slot}?",
+        "attach_failed": "Не удалось установить часть.",
+        "attach_hint": "Установленная часть запоминает свой слот, и части на ней переходят "
+                       "вместе с ней. Сколько места занимает собранный предмет, игра считает "
+                       "сама, а то, что она не может разместить, попадает в почтовый ящик — "
+                       "оставляйте место вокруг оружия, которое собираете.",
+        "attach_cramped": "{name} негде расти на своём месте. Проверено в игре: оружие "
+                          "остаётся на месте, а часть, которая не поместилась — {part} — "
+                          "попадает в ваш почтовый ящик. Сначала переставьте оружие туда, где "
+                          "вокруг есть место, либо установите всё равно и посмотрите в "
+                          "ящик.\n\nВсё равно установить?",
+        "status_attached": "{part} установлена в {slot} (ещё не сохранено)",
+        "ctx_spawn_preset": "Создать в сборе...",
+        "preset_title": "Предмет в сборе",
+        "preset_none": "Для этого предмета игра не содержит готовой сборки. Она есть только у "
+                       "53 пресетов огнестрельного оружия; всё остальное создаётся без частей.",
+        "preset_prompt": "Игра содержит для этого оружия несколько сборок.",
+        "preset_col_variant": "Сборка",
+        "preset_col_parts": "Установленные части",
+        "preset_no_space": "В выбранном контейнере нет места для оружия.",
+        "preset_partial": "Частей пропущено: {skipped} — их слот уже был занят.",
+        "status_preset": "{name} создан, частей установлено: {parts} (ещё не сохранено)",
+        "preset_outgrown": "Эта сборка {name} вырастает примерно до {grown}, а по данным игры "
+                           "оружие растёт только до {ceiling}. Проверено в игре: игра "
+                           "отказывается от такого предмета в любом месте и присылает его в "
+                           "почтовый ящик по частям — ни один предмет в реальном сохранении не "
+                           "стоит на своём максимуме. Таких сборок 17 из 53.\n\nВсё равно "
+                           "создать?",
         "ctx_info": "Информация о предмете",
         "info_title": "Информация о предмете",
         "info_value": "Цена",
@@ -1055,14 +1376,25 @@ TRANSLATIONS = {
                              "названия из игры».",
         "info_hours": "{hours} ч",
         "info_minutes": "{minutes} мин",
+        "info_seconds": "{seconds} с",
+        "info_section_ammo": "Патроны",
+        "info_ammo_takes": "Оружие принимает",
+        "info_ammo_fits": "Подходит к оружию",
+        "info_ammo_none": "В игровых данных нет оружия под этот патрон.",
+        "info_section_mods": "Модификации",
+        "info_mods_none": "У этого предмета нет точек крепления.",
+        "info_mods_fitted": "установлено по умолчанию",
+        "info_mods_required": "обязательно",
+        "info_section_fits_on": "Ставится на",
+        "info_fits_on_none": "В игровых данных нет предмета со слотом под это.",
+        "info_fits_on_row": "{name}   {slot}",
+        "info_fits_on_more": "... и ещё {count}",
+        "info_slot_fallback": "Слот {type}",
         "status_repaired_custom": "Состояние задано для {count} предметов (ещё не сохранено)",
-        "msg_select_search_result": "Сначала выберите результат поиска.",
         "msg_select_letter": "Сначала выберите письмо.",
         "msg_err_resolve_letter": "Не удалось определить индекс выбранного письма.",
         "msg_err_letter_out_of_range": "Выбранное письмо находится вне диапазона.",
         "msg_err_save_failed": "Не удалось сохранить изменения:\n{exc}",
-        "search_results_title": "Результаты поиска ({count})",
-        "search_found_count": "Найдено {count} совпадающих предметов",
         "col_id": "Id",
         "col_condition": "Состояние",
         "btn_ok": "ОК",
@@ -1133,6 +1465,28 @@ INFO_USED_IN_ROWS = 8
 # inlined so the tests can look for it without repeating the character.
 INFO_MARKER = "▸ "
 
+# Visible rows of the attachment tree before it scrolls. Kept low on purpose: an assault rifle
+# resolves to a 19-row tree, and showing it whole pushed the window to 835px, which clips the
+# Close button on a 768px screen.
+INFO_MOD_ROWS = 8
+
+# One cell of slack in each direction on top of every size the data states, for a resizable
+# item this editor places. Measured in play on 2026-07-30 and not derivable from any field: a bare
+# Gaston 17 draws 2x1 and **blocks 4x2** - one cell wider than its own 3x2 MaxSize - while the
+# same pistol assembled as an MK3 blocks exactly the 3x2 its parts add up to. A weapon with empty
+# slots evidently holds room for what could still go in them, and the game answers a spot that is
+# too small by mailing the item. Crude on purpose: it is the honest shape of a rule nobody has
+# read out of the data, and it costs cells in a tab rather than items in a mailbox.
+ASSEMBLED_SLACK = (1, 1)
+
+# The change list groups by section and shows this many rows per group before it says how many
+# more there are. A trader stock refresh rewrites some 1400 leaves on its own - measured on two
+# real saves a day apart - and a flat list of those buries the two changes the user made.
+DIFF_SECTION_LIMIT = 40
+
+# Groups this small start open; bigger ones stay collapsed so the window opens on a summary.
+DIFF_OPEN_ROWS = 12
+
 # One-click "fill trader balances" without a report. Each shop's own `ShopBalance` from the
 # game data is preferred; this is the flat value the cheat wrote before that existed.
 TRADER_BALANCE_FALLBACK = 1000000
@@ -1164,6 +1518,9 @@ class SaveEditorGUI:
 
         self.entry_members: dict[str, list[str]] = {}
         self.loaded_nodes: set[str] = set()
+        # Answers "does this item or anything under it match", filled while a filtered tree
+        # is built and dropped again afterwards: a match depends on the query.
+        self._search_match_cache: dict[str, bool] = {}
         self.scope_labels: list[str] = []
         self.mail_index_map: dict[str, int] = {}
         self.template_name_map: dict[str, str] = {}
@@ -1342,6 +1699,7 @@ class SaveEditorGUI:
         self._load_scope_options()
         self._refresh_mailbox()
         self._refresh_quests_tree()
+        self._refresh_crafting_tree()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_requested)
         self._start_music()
 
@@ -1401,6 +1759,7 @@ class SaveEditorGUI:
         self.tab_mailbox = ttk.Frame(self.notebook)
         self.tab_catalog = ttk.Frame(self.notebook)
         self.tab_quests = ttk.Frame(self.notebook)
+        self.tab_crafting = ttk.Frame(self.notebook)
         self.tab_char = ttk.Frame(self.notebook)
         self.tab_help = ttk.Frame(self.notebook)
 
@@ -1408,12 +1767,14 @@ class SaveEditorGUI:
         self.notebook.add(self.tab_catalog)
         self.notebook.add(self.tab_mailbox)
         self.notebook.add(self.tab_quests)
+        self.notebook.add(self.tab_crafting)
         self.notebook.add(self.tab_char)
         self.notebook.add(self.tab_help)
 
         self._build_help_tab(self.tab_help)
         self._build_char_tab(self.tab_char)
         self._build_quests_tab(self.tab_quests)
+        self._build_crafting_tab(self.tab_crafting)
 
         toolbar = ttk.Frame(self.tab_inventory)
         toolbar.pack(fill="x", padx=4, pady=4)
@@ -1434,8 +1795,8 @@ class SaveEditorGUI:
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(toolbar, textvariable=self.search_var, width=36)
         self.search_entry.pack(side="left", padx=(0, 6))
-        self.search_entry.bind("<Return>", lambda _: self._search_items())
-        self.search_btn = ttk.Button(toolbar, command=self._search_items)
+        self.search_entry.bind("<Return>", lambda _: self._apply_search())
+        self.search_btn = ttk.Button(toolbar, command=self._apply_search)
         self.search_btn.pack(side="left")
         self.discard_button = ttk.Button(
             toolbar,
@@ -1476,9 +1837,10 @@ class SaveEditorGUI:
         self.context_menu.add_command(command=self._duplicate_selected_custom)
         self.context_menu.add_command(command=self._move_selected)
         self.context_menu.add_command(command=self._split_selected)
+        self.context_menu.add_command(command=self._open_attachments_dialog)
         self.context_menu.add_command(command=self._show_info_for_selected_item)
         # The separator keeps the one destructive entry away from the rest. It occupies
-        # index 7, so Delete is relabelled as index 8. Every label below is applied by
+        # index 8, so Delete is relabelled as index 9. Every label below is applied by
         # position, so inserting an entry above one of them moves a label onto the wrong
         # action - which is why the tests assert the order.
         self.context_menu.add_separator()
@@ -1623,6 +1985,7 @@ class SaveEditorGUI:
             activeforeground="#ffffff"
         )
         self.catalog_menu.add_command(command=self._add_selected_catalog_item_to_inventory)
+        self.catalog_menu.add_command(command=self._spawn_preset_for_selected_catalog_row)
         self.catalog_menu.add_command(command=self._offer_selected_catalog_item_at_trader)
         self.catalog_menu.add_command(command=self._show_info_for_selected_catalog_row)
 
@@ -1776,6 +2139,7 @@ class SaveEditorGUI:
         self.notebook.tab(self.tab_mailbox, text=t["tab_mailbox"])
         self.notebook.tab(self.tab_catalog, text=t["tab_catalog"])
         self.notebook.tab(self.tab_quests, text=t["tab_quests"])
+        self.notebook.tab(self.tab_crafting, text=t["tab_crafting"])
         self.notebook.tab(self.tab_char, text=t["tab_hackerman"])
         self.notebook.tab(self.tab_help, text=t["tab_help"])
         
@@ -1797,9 +2161,10 @@ class SaveEditorGUI:
         self.context_menu.entryconfigure(3, label=t["ctx_duplicate_custom"])
         self.context_menu.entryconfigure(4, label=t["ctx_move"])
         self.context_menu.entryconfigure(5, label=t["ctx_split"])
-        self.context_menu.entryconfigure(6, label=t["ctx_info"])
-        # Index 7 is the separator.
-        self.context_menu.entryconfigure(8, label=t["ctx_delete"])
+        self.context_menu.entryconfigure(6, label=t["ctx_attachments"])
+        self.context_menu.entryconfigure(7, label=t["ctx_info"])
+        # Index 8 is the separator.
+        self.context_menu.entryconfigure(9, label=t["ctx_delete"])
         
         # 4. Mailbox Tab
         self.mail_delete_btn.configure(text=t["btn_delete_mail"])
@@ -1819,8 +2184,9 @@ class SaveEditorGUI:
         self.cat_search_lbl.configure(text=t["lbl_search"])
         self.cat_search_btn.configure(text=t["btn_search"])
         self.catalog_menu.entryconfigure(0, label=t["ctx_add_to_inv"])
-        self.catalog_menu.entryconfigure(1, label=t["ctx_offer_at_trader"])
-        self.catalog_menu.entryconfigure(2, label=t["ctx_info"])
+        self.catalog_menu.entryconfigure(1, label=t["ctx_spawn_preset"])
+        self.catalog_menu.entryconfigure(2, label=t["ctx_offer_at_trader"])
+        self.catalog_menu.entryconfigure(3, label=t["ctx_info"])
 
         # 5b. Quests Tab. The group and status names sit inside the tree rows, so
         # relabelling the widgets is not enough - the rows have to be rebuilt.
@@ -1830,7 +2196,15 @@ class SaveEditorGUI:
         self.quests_tree.heading("sender", text=t["col_quest_sender"])
         self.quests_tree.heading("reward", text=t["col_quest_reward"])
         self._refresh_quests_tree()
-        
+
+        # 5c. Crafting Tab. Same rule as the Quests tab: the module and level names live in
+        # the rows, so relabelling the headings alone leaves them in the old language.
+        self.crafting_tree.heading("#0", text=t["craft_col_recipe"])
+        self.crafting_tree.heading("needs", text=t["craft_col_needs"])
+        self.crafting_tree.heading("time", text=t["craft_col_time"])
+        self.crafting_tree.heading("state", text=t["craft_col_state"])
+        self._refresh_crafting_tree()
+
         # Catalog Table Headings
         self.catalog_tree.heading("name", text=t["col_cat_name"])
         self.catalog_tree.heading("template_id", text=t["col_cat_template_id"])
@@ -1977,6 +2351,11 @@ class SaveEditorGUI:
             ("• Expand Folders: ", "bullet"),
             ("Double-click", "highlight"),
             (" on category/tab folders to expand their items.\n", "bullet"),
+            ("• Search: ", "bullet"),
+            ("Type a name, a category or an id and press Return. The tree keeps what matches, "
+             "and a hit inside a container opens that container so you can see where it sits. "
+             "An empty box shows everything again. It searches the chosen scope only, so pick "
+             "the tab first.\n", "bullet"),
             ("• Item Management: ", "bullet"),
             ("Right-click", "highlight"),
             (" on any item to open the action context menu:\n", "bullet"),
@@ -1991,10 +2370,22 @@ class SaveEditorGUI:
             ("  - Split Stack...: ", "highlight"),
             ("Takes part of a stack into a second one. At least one unit stays behind, since "
              "taking all of them would be a move rather than a split.\n", "bullet"),
+            ("  - Attachments...: ", "highlight"),
+            ("Fits parts into the item and takes them off again. The window shows the slots "
+             "on this item with whatever sits in each, and the items of yours that this one "
+             "fits into - only the half that applies. A free slot offers exactly the parts "
+             "the game allows there, out of what you own. Weapons, weapon parts, body parts "
+             "and helmets have slots; the item's own stored size is left alone, so a weapon "
+             "that grew with its parts may want more room in its container.\n", "bullet"),
             ("  - Item Info: ", "highlight"),
             ("Everything known about the item, read-only: value, weight, size, what "
              "recycling it yields at each recycler stage - with the one your own module can "
-             "reach marked - and which recipes use it as an ingredient.\n", "bullet"),
+             "reach marked - and which recipes use it as an ingredient. For a weapon it "
+             "also lists the cartridges it takes and its attachment points as a tree: a "
+             "muzzle device fits the barrel, the barrel fits the receiver, the receiver fits "
+             "the gun. Not only weapons: body parts and helmets have slots too, so an arm "
+             "shows its hydraulics and structure and a helmet its visor. Open the visor "
+             "instead and it names the helmet.\n", "bullet"),
             ("  - Delete Item: ", "highlight"),
             ("Removes the item and everything attached to it. To drop a single attachment "
              "instead, expand the item and right-click that attachment's own row. Warehouse "
@@ -2010,6 +2401,19 @@ class SaveEditorGUI:
             (". One window asks how many, where they go, and - for items that can carry one "
              "- the condition they start at. Left at the maximum the item is spawned "
              "pristine, which is how the game stores an untouched one.\n", "bullet"),
+            ("• Spawn a weapon assembled: ", "bullet"),
+            ("Right-click a firearm and pick ", "bullet"),
+            ("Spawn Assembled...", "highlight"),
+            (" to get it the way the game itself builds it, with magazine, barrel, stock and "
+             "sight already in their slots. 53 weapons have such a configuration and some have "
+             "several, in which case you pick from the variants and see what each carries. The "
+             "inbox is not offered here: delivering a weapon with parts on it as mail is "
+             "untested.\n", "bullet"),
+            ("• It needs room: ", "bullet"),
+            ("the game works out how much space an assembled weapon takes on its own and mails "
+             "anything it cannot place, so the editor keeps the weapon's maximum size free. A "
+             "small pouch is refused outright and a full tab answers \"no space\" rather than "
+             "spawning something that would arrive as mail.\n", "bullet"),
             ("• Where it goes: ", "bullet"),
             ("The list names every container with room and how much of it. A free spot is searched for there, and the item is turned 90° only if it fits no other way. Several items are placed one by one, so you are told if only part of a batch fits.\n", "bullet"),
             ("• Inbox: ", "bullet"),
@@ -2050,7 +2454,11 @@ class SaveEditorGUI:
             ("• Apply Edits: ", "bullet"),
             ("Click ", "bullet"),
             ("Apply Changes", "highlight"),
-            (" at the top right to save all edits to your file.\n", "bullet"),
+            (" at the top right to save all edits to your file. It shows the list of what it "
+             "is about to write first - every new item, every removed one, every changed "
+             "field with the value before and after - and waits for a yes. Cancel and nothing "
+             "is written. The list compares against the file on disk, so it also shows what "
+             "the game changed while the editor was open.\n", "bullet"),
             ("• Undo Edits: ", "bullet"),
             ("Click ", "bullet"),
             ("Discard Changes", "highlight"),
@@ -2079,6 +2487,22 @@ class SaveEditorGUI:
              "save at all, only what the quest asks for - so it cannot be shown either.\n\n\n",
              "bullet"),
 
+            ("★ CRAFTING ★\n\n", "header"),
+            ("• What the tab shows: ", "bullet"),
+            ("Every recipe the game's workbenches have, grouped by shelter module and by the "
+             "level that module needs. Each row says what it makes, what it takes, how long "
+             "it runs, and whether you could start it now. Select one and the pane underneath "
+             "lists each ingredient as have / needed, marking what you are short of.\n",
+             "bullet"),
+            ("• Not in the game yet: ", "bullet"),
+            ("Some recipes ask for a workbench level the game has no build step for - the 3D "
+             "Printer stops at level 1 and carries recipes for 2 and 3. Those are marked "
+             "rather than listed as craftable.\n", "bullet"),
+            ("• Recycling is elsewhere: ", "bullet"),
+            ("It is the same recipe list read from the item's side, so it lives in Item Info "
+             "where you have the item in hand. Read-only, like the Quests tab.\n\n\n",
+             "bullet"),
+
             ("★ SUPPORT THE PROJECT ★\n\n", "header"),
             ("• Support on Ko-fi: ", "bullet"),
             ("If you enjoy using this free save editor, consider supporting development on Ko-fi:\n", "bullet"),
@@ -2096,6 +2520,11 @@ class SaveEditorGUI:
             ("• Ordner erweitern: ", "bullet"),
             ("Doppelklicke", "highlight"),
             (" auf Kategorie- oder Reiter-Ordner, um deren Inhalt anzuzeigen.\n", "bullet"),
+            ("• Suche: ", "bullet"),
+            ("Namen, Kategorie oder ID eintippen und Eingabetaste drücken. Der Baum zeigt nur "
+             "noch die Treffer, und ein Treffer in einem Behälter klappt diesen auf, damit du "
+             "siehst, wo er steckt. Leeres Feld zeigt wieder alles. Gesucht wird nur im "
+             "gewählten Bereich, also vorher den Reiter auswählen.\n", "bullet"),
             ("• Gegenstandsverwaltung: ", "bullet"),
             ("Klicke mit der rechten Maustaste", "highlight"),
             (" auf einen beliebigen Gegenstand, um das Kontextmenü zu öffnen:\n", "bullet"),
@@ -2111,11 +2540,23 @@ class SaveEditorGUI:
             ("  - Stapel teilen...: ", "highlight"),
             ("Trennt einen Teil eines Stapels zu einem zweiten ab. Mindestens ein Stück bleibt "
              "zurück, denn alles abzutrennen wäre ein Verschieben und kein Teilen.\n", "bullet"),
+            ("  - Anbauteile...: ", "highlight"),
+            ("Montiert Teile an den Gegenstand und nimmt sie wieder ab. Das Fenster zeigt die "
+             "Aufnahmen dieses Gegenstands mit dem, was darin sitzt, und deine Gegenstände, "
+             "auf die dieser passt - jeweils nur die Hälfte, die zutrifft. Eine freie Aufnahme "
+             "bietet genau die Teile an, die das Spiel dort erlaubt, aus deinem Bestand. "
+             "Aufnahmen haben Waffen, Waffenteile, Körperteile und Helme. Die gespeicherte "
+             "Größe des Wirts bleibt unverändert - eine mit Teilen gewachsene Waffe kann in "
+             "ihrem Behälter mehr Platz brauchen.\n", "bullet"),
             ("  - Info zum Gegenstand: ", "highlight"),
             ("Alles, was über den Gegenstand bekannt ist, nur zur Ansicht: Wert, Gewicht, "
              "Größe, was beim Recyceln auf jeder Ausbaustufe herauskommt - die für deinen "
              "eigenen Recycler erreichbare ist markiert - und in welchen Rezepten er Zutat "
-             "ist.\n", "bullet"),
+             "ist. Bei einer Waffe zusätzlich die passende Munition und die Anbaupunkte als "
+             "Baum: eine Mündungsvorrichtung sitzt am Lauf, der Lauf am Receiver, der "
+             "Receiver an der Waffe. Nicht nur Waffen: Körperteile und Helme haben ebenfalls "
+             "Slots, ein Arm zeigt also Hydraulik und Struktur und ein Helm sein Visier. "
+             "Öffnest du stattdessen das Visier, nennt es den Helm.\n", "bullet"),
             ("  - Gegenstand löschen: ", "highlight"),
             ("Entfernt den Gegenstand samt allem, was daran hängt. Um nur einen einzelnen "
              "Anbauteil zu entfernen, klappe den Gegenstand auf und mache den Rechtsklick auf "
@@ -2131,6 +2572,20 @@ class SaveEditorGUI:
             (". Ein Fenster fragt wie viele, wohin, und - bei Gegenständen, die einen tragen "
              "können - mit welchem Zustand sie beginnen. Beim Maximum entstehen sie "
              "makellos, so wie das Spiel einen unberührten Gegenstand ablegt.\n", "bullet"),
+            ("• Waffe fertig aufgebaut: ", "bullet"),
+            ("Rechtsklick auf eine Schusswaffe und ", "bullet"),
+            ("Fertig aufgebaut spawnen...", "highlight"),
+            (" liefert sie so, wie das Spiel sie selbst baut - Magazin, Lauf, Schaft und "
+             "Visier sitzen schon in ihren Aufnahmen. 53 Waffen haben so eine Konfiguration, "
+             "manche mehrere; dann wählst du aus den Varianten und siehst, was jede trägt. Der "
+             "Posteingang steht hier nicht zur Wahl: eine Waffe mit Teilen als Post zu "
+             "schicken ist ungetestet.\n", "bullet"),
+            ("• Sie braucht Platz: ", "bullet"),
+            ("wie viel Fläche eine zusammengebaute Waffe belegt, rechnet das Spiel selbst aus, "
+             "und was es nicht platzieren kann, kommt ins Postfach. Der Editor hält deshalb die "
+             "Maximalgröße der Waffe frei. Eine kleine Tasche wird direkt abgelehnt, ein voller "
+             "Reiter antwortet mit \"kein Platz\" statt etwas zu spawnen, das als Post "
+             "ankommt.\n", "bullet"),
             ("• Wohin es kommt: ", "bullet"),
             ("Die Liste nennt jeden Behälter mit Platz und wie viel davon frei ist. Dort wird ein freier Platz gesucht, gedreht wird nur, wenn es sonst nicht passt. Mehrere Gegenstände werden einzeln platziert; passt nur ein Teil, wird es dir gesagt.\n", "bullet"),
             ("• Posteingang: ", "bullet"),
@@ -2172,6 +2627,12 @@ class SaveEditorGUI:
             ("• Änderungen übernehmen: ", "bullet"),
             ("Klicke oben rechts auf ", "bullet"),
             ("Änderungen übernehmen", "highlight"),
+            (" zeigt vorher die Liste dessen, was geschrieben werden soll - jeder neue "
+             "Gegenstand, jeder entfernte, jedes geänderte Feld mit Wert vorher und nachher - "
+             "und wartet auf ein Ja. Bei Abbruch wird nichts geschrieben. Verglichen wird mit "
+             "der Datei auf der Platte, du siehst also auch, was das Spiel nebenher geändert "
+             "hat.\n", "bullet"),
+            ("", "bullet"),
             (" um deine Datei zu aktualisieren.\n", "bullet"),
             ("• Änderungen verwerfen: ", "bullet"),
             ("Klicke auf ", "bullet"),
@@ -2203,6 +2664,21 @@ class SaveEditorGUI:
              "gar nicht im Spielstand, nur ihr Ziel - deshalb lässt er sich auch nicht "
              "anzeigen.\n\n\n", "bullet"),
 
+            ("★ HERSTELLUNG ★\n\n", "header"),
+            ("• Was der Reiter zeigt: ", "bullet"),
+            ("Jedes Rezept der Werkbänke im Spiel, gruppiert nach Shelter-Modul und nach der "
+             "Stufe, die das Modul dafür braucht. Jede Zeile nennt Ergebnis, Zutaten, Dauer "
+             "und ob du sofort anfangen könntest. Bei Auswahl listet das Feld darunter jede "
+             "Zutat als vorhanden / nötig und hebt hervor, was fehlt.\n", "bullet"),
+            ("• Noch nicht im Spiel: ", "bullet"),
+            ("Manche Rezepte verlangen eine Werkbankstufe, für die es keinen Bauschritt gibt "
+             "- der 3D-Printer endet bei Stufe 1 und hat Rezepte für 2 und 3. Die sind "
+             "markiert und nicht als machbar gelistet.\n", "bullet"),
+            ("• Recyceln steht anderswo: ", "bullet"),
+            ("Es ist dieselbe Rezeptliste von der Gegenstandsseite und steht deshalb in der "
+             "Gegenstandsinfo, wo du den Gegenstand in der Hand hast. Nur zur Ansicht, wie "
+             "der Quests-Reiter.\n\n\n", "bullet"),
+
             ("★ PROJEKT UNTERSTÜTZEN ★\n\n", "header"),
             ("• Auf Ko-fi unterstützen: ", "bullet"),
             ("Wenn dir dieser kostenlose Speicherstand-Editor gefällt, kannst du die Entwicklung auf Ko-fi unterstützen:\n", "bullet"),
@@ -2220,6 +2696,11 @@ class SaveEditorGUI:
             ("• Развернуть папки: ", "bullet"),
             ("Дважды щелкните", "highlight"),
             (" по папкам категорий, чтобы показать их содержимое.\n", "bullet"),
+            ("• Поиск: ", "bullet"),
+            ("Введите название, категорию или идентификатор и нажмите Enter. В дереве "
+             "останутся только совпадения, а найденное внутри контейнера раскроет этот "
+             "контейнер. Пустое поле снова показывает всё. Поиск идёт только по выбранной "
+             "области, поэтому сначала выберите вкладку.\n", "bullet"),
             ("• Управление предметами: ", "bullet"),
             ("Нажмите правой кнопкой мыши", "highlight"),
             (" по любому предмету для открытия контекстного меню:\n", "bullet"),
@@ -2234,10 +2715,22 @@ class SaveEditorGUI:
             ("  - Разделить стак...: ", "highlight"),
             ("Отделяет часть стака во второй стак. Хотя бы одна штука остаётся на месте: "
              "отделить всё — это перемещение, а не разделение.\n", "bullet"),
+            ("  - Навесное...: ", "highlight"),
+            ("Ставит части на предмет и снимает их обратно. Окно показывает слоты этого "
+             "предмета с тем, что в них стоит, и ваши предметы, на которые он подходит — "
+             "только ту половину, которая применима. Свободный слот предлагает ровно те "
+             "части, которые игра там допускает, из того, что у вас есть. Слоты есть у "
+             "оружия, частей оружия, частей тела и шлемов. Сохранённый размер носителя не "
+             "меняется — выросшее оружие может занять в контейнере больше места.\n",
+             "bullet"),
             ("  - Информация о предмете: ", "highlight"),
             ("Всё, что известно о предмете, только для чтения: цена, вес, размер, что даёт "
              "переработка на каждом уровне модуля — доступный вашему переработчику отмечен — "
-             "и в каких рецептах предмет является ингредиентом.\n", "bullet"),
+             "и в каких рецептах предмет является ингредиентом. Для оружия — ещё и "
+             "подходящие патроны и точки крепления в виде дерева: дульное устройство "
+             "ставится на ствол, ствол в ресивер, ресивер в оружие. И не только оружие: у "
+             "частей тела и шлемов слоты тоже есть — рука показывает гидравлику и структуру, "
+             "шлем своё забрало. Откройте забрало — оно назовёт шлем.\n", "bullet"),
             ("  - Удалить предмет: ", "highlight"),
             ("Удаляет предмет вместе со всем, что к нему присоединено. Чтобы снять только "
              "одно вложение, разверните предмет и нажмите правой кнопкой по строке самого "
@@ -2255,6 +2748,20 @@ class SaveEditorGUI:
              "именно так игра хранит нетронутый предмет.\n", "bullet"),
             ("• Куда попадёт: ", "bullet"),
             ("В списке указан каждый контейнер со свободным местом. Там ищется свободная ячейка; поворот на 90° — только если иначе не влезает.\n", "bullet"),
+            ("• Оружие в сборе: ", "bullet"),
+            ("Правый клик по огнестрельному оружию и ", "bullet"),
+            ("Создать в сборе...", "highlight"),
+            (" выдаёт его таким, каким его собирает сама игра: магазин, ствол, приклад и "
+             "прицел уже стоят в слотах. Такая сборка есть у 53 единиц оружия, у некоторых "
+             "несколько — тогда вы выбираете вариант и видите, что несёт каждый. Входящие "
+             "здесь не предлагаются: доставка оружия с частями почтой не проверена.\n",
+             "bullet"),
+            ("• Нужно место: ", "bullet"),
+            ("сколько места занимает оружие в сборе, игра считает сама, а то, что не может "
+             "разместить, отправляет в почтовый ящик. Поэтому редактор держит свободным "
+             "максимальный размер оружия: маленькая сумка отклоняется сразу, а полный отсек "
+             "отвечает «нет места» вместо того, чтобы создать предмет, который придёт "
+             "письмом.\n", "bullet"),
             ("• Входящие: ", "bullet"),
             ("Доступно всегда, даже когда всё заполнено. Предмет сохраняется без позиции, и игра выдаёт его письмом.\n", "bullet"),
             ("• Оружие занимает больше, чем кажется: ", "bullet"),
@@ -2293,6 +2800,11 @@ class SaveEditorGUI:
             ("• Применить изменения: ", "bullet"),
             ("Нажмите ", "bullet"),
             ("Применить изменения", "highlight"),
+            (" сначала показывает список того, что будет записано: каждый новый предмет, "
+             "каждый удалённый, каждое изменённое поле со значением до и после — и ждёт "
+             "подтверждения. При отмене ничего не записывается. Сравнение идёт с файлом на "
+             "диске, поэтому видно и то, что изменила сама игра.\n", "bullet"),
+            ("", "bullet"),
             (" в верхнем правом углу для сохранения файла.\n", "bullet"),
             ("• Сбросить изменения: ", "bullet"),
             ("Нажмите ", "bullet"),
@@ -2322,6 +2834,21 @@ class SaveEditorGUI:
             ("• Только для просмотра: ", "bullet"),
             ("Здесь ничего не записывается. Прогресса активного квеста в сохранении нет "
              "вообще - есть только его цель, поэтому показать его тоже нельзя.\n\n\n",
+             "bullet"),
+
+            ("★ КРАФТ ★\n\n", "header"),
+            ("• Что показывает вкладка: ", "bullet"),
+            ("Каждый рецепт верстаков игры, сгруппированный по модулю убежища и по уровню, "
+             "который этот модуль требует. В строке — что даёт, что требует, сколько идёт и "
+             "можно ли начать сейчас. При выборе панель снизу перечисляет каждый ингредиент "
+             "как в наличии / нужно и выделяет то, чего не хватает.\n", "bullet"),
+            ("• Ещё нет в игре: ", "bullet"),
+            ("Некоторые рецепты требуют уровня верстака, для которого в игре нет шага "
+             "постройки: 3D-принтер заканчивается на уровне 1 и несёт рецепты для 2 и 3. Они "
+             "помечены, а не показаны как доступные.\n", "bullet"),
+            ("• Переработка — в другом месте: ", "bullet"),
+            ("Это тот же список рецептов со стороны предмета, поэтому он в информации о "
+             "предмете, где предмет у вас в руках. Только просмотр, как вкладка квестов.\n\n\n",
              "bullet"),
 
             ("★ ПОДДЕРЖАТЬ ПРОЕКТ ★\n\n", "header"),
@@ -3676,6 +4203,8 @@ class SaveEditorGUI:
         self.level_progress = {}
         self.quests_meta = {}
         self.craft_meta = {}
+        self.crafting_meta = {}
+        self.presets_meta = []
         self.traders_name_map = dict(TRADER_NAMES)
 
         for path in self._mapping_candidates():
@@ -3736,6 +4265,20 @@ class SaveEditorGUI:
             if isinstance(craft_meta, dict):
                 self.craft_meta = craft_meta
 
+            crafting_meta = report.get("crafting_meta")
+            if isinstance(crafting_meta, dict):
+                self.crafting_meta = crafting_meta
+
+            presets_meta = report.get("presets_meta")
+            if isinstance(presets_meta, list):
+                # Keyed lookups happen per template, so the roots are lowercased once here
+                # rather than at every call site.
+                self.presets_meta = [
+                    dict(row, root=str(row.get("root") or "").strip().lower())
+                    for row in presets_meta
+                    if isinstance(row, dict) and row.get("root")
+                ]
+
             item_catalog = report.get("item_catalog", [])
             if isinstance(item_catalog, list):
                 for row in item_catalog:
@@ -3777,6 +4320,8 @@ class SaveEditorGUI:
         self.game_item_catalog = []
         self.game_item_meta_by_template_id = {}
         self.craft_meta = {}
+        self.crafting_meta = {}
+        self.presets_meta = []
 
     def _extractor_script_path(self) -> Path:
         base_dir = Path(__file__).resolve().parent
@@ -4141,6 +4686,242 @@ class SaveEditorGUI:
             text = f"{text} | {condition}"
         return text
 
+    # --- Crafting ----------------------------------------------------------------------
+    # Read-only, like the Quests tab, and for the same reason: what a workbench can make comes
+    # from the game data, and the save only decides how far the bench is built and what is in
+    # store. Recycling is deliberately absent - it is the same recipe list read from the item's
+    # end, and the item info window already answers it.
+
+    def _owned_unit_counts(self) -> dict[str, int]:
+        """Template id -> how many units of it the save holds, stacks counted by quantity.
+
+        A stack is one item carrying `StackableComponent_quantity`, so counting items would
+        report 1 for a stack of sixty. An item with no quantity field counts as one unit.
+        """
+        counts: dict[str, int] = {}
+        for item in self.manager.get_all_items_flat():
+            template_id = str(item.get("TemplateId") or "").strip().lower()
+            if not template_id:
+                continue
+            inner = (item.get("AdditionalData") or {}).get("_data") or {}
+            quantity = inner.get("StackableComponent_quantity") if isinstance(inner, dict) else None
+            units = (
+                quantity if isinstance(quantity, int) and not isinstance(quantity, bool)
+                and quantity > 0 else 1
+            )
+            counts[template_id] = counts.get(template_id, 0) + units
+        return counts
+
+    def _recipe_state(self, recipe: dict, module: dict, owned: dict[str, int]) -> str:
+        """One of "ready", "missing", "locked", "unbuildable" for one recipe.
+
+        The last one is not a shortcoming of the save: a recipe can ask for a module level the
+        module has no build step for - `MinLevel` 9, 333 and 999 appear against ceilings of 2
+        and 3 - so the recipe exists in the data while the workbench to run it does not.
+        """
+        min_level = recipe.get("min_level")
+        min_level = min_level if isinstance(min_level, int) else 1
+        max_level = module.get("max_level")
+        max_level = max_level if isinstance(max_level, int) else 0
+        if max_level and min_level > max_level:
+            return "unbuildable"
+        if min_level > int(module.get("_level") or 0):
+            return "locked"
+        for row in recipe.get("inputs") or []:
+            template_id = str(row.get("template_id") or "").strip().lower()
+            needed = row.get("count") if isinstance(row.get("count"), int) else 1
+            if owned.get(template_id, 0) < needed:
+                return "missing"
+        return "ready"
+
+    def _build_crafting_tab(self, parent: ttk.Frame) -> None:
+        """Every workbench recipe, grouped by module and by the level it needs."""
+        self.crafting_count_lbl = ttk.Label(parent, style="Status.TLabel")
+        self.crafting_count_lbl.pack(anchor="w", padx=10, pady=(10, 4))
+
+        panes = ttk.PanedWindow(parent, orient="vertical")
+        panes.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+
+        tree_frame = ttk.Frame(panes)
+        panes.add(tree_frame, weight=3)
+
+        scroll = ttk.Scrollbar(tree_frame, orient="vertical")
+        scroll.pack(side="right", fill="y")
+        self.crafting_tree = ttk.Treeview(
+            tree_frame,
+            columns=("needs", "time", "state"),
+            show="tree headings",
+            selectmode="browse",
+            yscrollcommand=scroll.set,
+        )
+        scroll.configure(command=self.crafting_tree.yview)
+        self.crafting_tree.pack(side="left", fill="both", expand=True)
+        self.crafting_tree.column("#0", width=300, anchor="w", stretch=True)
+        # No "makes" column: all 150 recipes have exactly one output, so the row title already
+        # names it and a second column would repeat every row word for word.
+        self.crafting_tree.column("needs", width=520, anchor="w")
+        self.crafting_tree.column("time", width=90, anchor="w")
+        self.crafting_tree.column("state", width=130, anchor="w")
+        self.crafting_tree.bind("<<TreeviewSelect>>", self._on_recipe_selected)
+
+        detail_frame = ttk.Frame(panes)
+        panes.add(detail_frame, weight=1)
+        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical")
+        detail_scroll.pack(side="right", fill="y")
+        self.recipe_detail = tk.Text(
+            detail_frame, height=7, wrap="word", bg="#252526", fg="#d4d4d4",
+            relief="flat", padx=8, pady=6, yscrollcommand=detail_scroll.set,
+        )
+        detail_scroll.configure(command=self.recipe_detail.yview)
+        self.recipe_detail.pack(side="left", fill="both", expand=True)
+        self.recipe_detail.tag_configure("field", foreground="#3794ff")
+        self.recipe_detail.tag_configure("dim", foreground="#9a9a9a")
+        self.recipe_detail.tag_configure("short", foreground="#f48771")
+        self.recipe_detail.configure(state="disabled")
+
+        self.crafting_hint = ttk.Label(parent, style="Hint.TLabel",
+                                       wraplength=900, justify="left")
+        self.crafting_hint.pack(anchor="w", padx=10, pady=(0, 6))
+        # iid -> (module index, recipe index), because a Treeview row carries no payload.
+        self.crafting_rows: dict[str, tuple[int, int]] = {}
+
+    def _refresh_crafting_tree(self) -> None:
+        """Rebuilds the tree. Called on load, on a language switch and after a restore."""
+        t = TRANSLATIONS[self.current_lang]
+        if not hasattr(self, "crafting_tree"):
+            return
+        self.crafting_tree.delete(*self.crafting_tree.get_children())
+        self.crafting_rows = {}
+
+        modules = [m for m in ((self.crafting_meta or {}).get("modules") or [])
+                   if isinstance(m, dict)]
+        self.crafting_hint.configure(text=t["craft_hint"])
+        if not modules:
+            self.crafting_count_lbl.configure(text=t["craft_no_data"])
+            return
+
+        levels = self._shelter_module_levels()
+        owned = self._owned_unit_counts()
+        state_labels = {
+            "ready": t["craft_state_ready"],
+            "missing": t["craft_state_missing"],
+            "locked": t["craft_state_locked"],
+            "unbuildable": t["craft_state_unbuildable"],
+        }
+
+        total = ready = 0
+        for module_index, module in enumerate(modules):
+            module["_level"] = levels.get(
+                str(module.get("foundation_id") or "").strip().lower(), 0)
+            label = str(module.get("name") or module.get("alias") or "")
+            node = self.crafting_tree.insert(
+                "", "end",
+                text=t["craft_module_row"].format(
+                    name=label, level=module["_level"], max=module.get("max_level") or 0,
+                    count=len(module.get("recipes") or [])),
+                open=bool(module["_level"]),
+            )
+
+            by_level: dict[int, list[tuple[int, dict]]] = {}
+            for recipe_index, recipe in enumerate(module.get("recipes") or []):
+                min_level = recipe.get("min_level")
+                by_level.setdefault(min_level if isinstance(min_level, int) else 1, []).append(
+                    (recipe_index, recipe))
+
+            for min_level in sorted(by_level):
+                level_node = self.crafting_tree.insert(
+                    node, "end",
+                    text=t["craft_level_row"].format(
+                        level=min_level, count=len(by_level[min_level])),
+                    open=min_level <= int(module["_level"] or 0),
+                )
+                for recipe_index, recipe in by_level[min_level]:
+                    state = self._recipe_state(recipe, module, owned)
+                    total += 1
+                    ready += state == "ready"
+                    needs = ", ".join(
+                        self._recipe_part_text(row) for row in recipe.get("inputs") or [])
+                    iid = self.crafting_tree.insert(
+                        level_node, "end",
+                        text=self._recipe_title(recipe),
+                        values=(needs,
+                                self._format_duration(recipe.get("duration_seconds")),
+                                state_labels[state]),
+                    )
+                    self.crafting_rows[iid] = (module_index, recipe_index)
+
+        self.crafting_count_lbl.configure(
+            text=t["craft_count"].format(
+                modules=len(modules), recipes=total, ready=ready))
+
+    def _recipe_part_text(self, row: dict) -> str:
+        """"3x Acid" for one side of a recipe, with the count left out when it is one."""
+        template_id = str(row.get("template_id") or "")
+        name = self._template_name_for_template_id(template_id) or template_id
+        count = row.get("count")
+        return f"{count}x {name}" if isinstance(count, int) and count > 1 else name
+
+    def _recipe_title(self, recipe: dict) -> str:
+        """What to call the recipe: what it makes, since its own name is often internal.
+
+        254 of the recipe names read like `Head_01_Model_05`. The first output resolved
+        through the catalog is the useful label; the raw name stays as the fallback and is
+        shown in the detail pane either way.
+        """
+        outputs = recipe.get("outputs") or []
+        if outputs:
+            name = self._template_name_for_template_id(outputs[0].get("template_id"))
+            if name:
+                count = outputs[0].get("count")
+                return f"{count}x {name}" if isinstance(count, int) and count > 1 else name
+        return str(recipe.get("name") or "")
+
+    def _on_recipe_selected(self, _event=None) -> None:
+        """Fills the detail pane: what it takes, what is in store, what it makes."""
+        t = TRANSLATIONS[self.current_lang]
+        selection = self.crafting_tree.selection()
+        self.recipe_detail.configure(state="normal")
+        self.recipe_detail.delete("1.0", "end")
+
+        found = self.crafting_rows.get(selection[0]) if selection else None
+        if found is None:
+            self.recipe_detail.configure(state="disabled")
+            return
+
+        module_index, recipe_index = found
+        modules = (self.crafting_meta or {}).get("modules") or []
+        module = modules[module_index]
+        recipe = (module.get("recipes") or [])[recipe_index]
+        owned = self._owned_unit_counts()
+
+        def line(label: str, value: str, tag: str = "") -> None:
+            self.recipe_detail.insert("end", f"{label}: ", "field")
+            self.recipe_detail.insert("end", f"{value}\n", tag or ())
+
+        line(t["craft_detail_makes"],
+             ", ".join(self._recipe_part_text(row) for row in recipe.get("outputs") or []))
+        line(t["craft_detail_where"],
+             t["craft_detail_where_value"].format(
+                 name=str(module.get("name") or module.get("alias") or ""),
+                 needed=recipe.get("min_level"), level=module.get("_level") or 0,
+                 max=module.get("max_level") or 0))
+        line(t["craft_detail_time"], self._format_duration(recipe.get("duration_seconds")))
+
+        self.recipe_detail.insert("end", f"{t['craft_detail_needs']}:\n", "field")
+        for row in recipe.get("inputs") or []:
+            template_id = str(row.get("template_id") or "").strip().lower()
+            needed = row.get("count") if isinstance(row.get("count"), int) else 1
+            have = owned.get(template_id, 0)
+            name = self._template_name_for_template_id(template_id) or template_id
+            self.recipe_detail.insert(
+                "end", f"   {name}: {have} / {needed}\n",
+                "dim" if have >= needed else "short")
+
+        internal = str(recipe.get("name") or "")
+        if internal:
+            line(t["craft_detail_internal"], internal, "dim")
+        self.recipe_detail.configure(state="disabled")
+
     # --- Placement ------------------------------------------------------------------
     # A container's grid is not in the save; it comes from the template's own component,
     # which the extractor writes into each catalog row as `container`. Without it nothing
@@ -4172,6 +4953,9 @@ class SaveEditorGUI:
         effect visible in-game. Only an item that carries no size falls back to its template.
         Measured across a real save: this and the plain template size both give zero
         overlaps, and MaxSize gives 80.
+
+        The one exception is an item **this editor placed and the game has not looked at yet**,
+        which is covered by `_own_placed_footprint` below.
         """
         item = self.manager.get_item(item_id) or {}
         data = (item.get("AdditionalData") or {}).get("_data") or {}
@@ -4185,9 +4969,65 @@ class SaveEditorGUI:
             if template is None:
                 return None
             width, height = template
+        grown = self._own_placed_footprint(item_id)
+        if grown is not None:
+            width, height = grown
         if rotated:
             return height, width
         return width, height
+
+    def _own_placed_footprint(self, item_id: str) -> tuple[int, int] | None:
+        """What a weapon *this editor* put together really covers, or None to use the save.
+
+        The problem this solves came from play: spawn an assembled Gaston, then an LM39 into the
+        same tab, and the LM39 arrives as mail. The first weapon is stored at its template size
+        while the game grows it, so the second one is placed into space the first actually
+        occupies. Holding the cells in a session variable fixed it only until the editor re-read
+        the save - which is what the report of "the free space is not read again" was.
+
+        So the footprint itself has to say it, and the signature has to be narrow enough not to
+        disturb what the game wrote. Three conditions together, all measured against a real
+        save's 54 grid-sitting weapons:
+
+        - the template is **resizable**, which is what "can grow" means in this data
+        - the item carries an **explicit** size equal to its template's. The game leaves the size
+          out entirely on 8 assembled weapons in rifle cases (Herstal 57, Eliphalet 700, Ramon
+          1891), so "absent" must not qualify - modelling those generously is what would put
+          overlaps back into `test_placement_real.py`
+
+        **No item in a real save matches both** - measured across all 1859 - while every resizable
+        item this editor places does, until the game rewrites its size. Bare spawns are included
+        on purpose: the 4x2 that started this was a Gaston with no parts at all.
+
+        The answer is the largest of everything the data states - the stored size, the parts'
+        `resize` sum, the `MaxSize` ceiling - plus `ASSEMBLED_SLACK`.
+        """
+        item = self.manager.get_item(item_id) or {}
+        meta = self.game_item_meta_by_template_id.get(
+            str(item.get("TemplateId") or "").strip().lower(), {})
+        if not meta.get("is_resizable"):
+            return None
+        data = (item.get("AdditionalData") or {}).get("_data") or {}
+        width, height = data.get("BaseComponent_width"), data.get("BaseComponent_height")
+        if not isinstance(width, int) or not isinstance(height, int):
+            return None
+        if self._footprint_for_template(
+                str(item.get("TemplateId") or "").lower()) != (width, height):
+            return None
+
+        grown_w, grown_h = width, height
+        for part_id in self.manager.collect_subtree(str(item_id))[1:]:
+            part = self.manager.get_item(part_id) or {}
+            part_meta = self.game_item_meta_by_template_id.get(
+                str(part.get("TemplateId") or "").strip().lower(), {})
+            resize = part_meta.get("resize")
+            if isinstance(resize, dict):
+                grown_w += int(resize.get("width") or 0)
+                grown_h += int(resize.get("height") or 0)
+        ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
+        ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
+        return (max(grown_w, ceiling_w) + ASSEMBLED_SLACK[0],
+                max(grown_h, ceiling_h) + ASSEMBLED_SLACK[1])
 
     def _container_cells_for(self, container_id: str):
         item = self.manager.get_item(container_id)
@@ -4199,12 +5039,62 @@ class SaveEditorGUI:
         return container_cells(meta.get("container"))
 
     def _placement_in(self, container_id: str, width: int, height: int):
-        """(I, J, rotated) for a free spot, or None when the container has no room."""
+        """(I, J, rotated) for a free spot, or None when the container has no room.
+
+        An assembled weapon blocks what it will grow into rather than what the save says it
+        covers - see `_own_placed_footprint`. That started life as a set of cells remembered
+        per container, which worked until the editor re-read the save and forgot them: spawn a
+        Gaston, then an LM39 into the same tab in a later session, and the LM39 arrives as mail.
+        Deriving it from the item tree instead survives a reload, a restart, and every other
+        placement path.
+        """
         cells = self._container_cells_for(container_id)
         if not cells:
             return None
         occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
+        for cell in self._keep_out_cells(container_id):
+            occupied.setdefault(cell, "margin")
         return find_placement(cells, occupied, width, height)
+
+    def _keep_out_cells(self, container_id: str) -> set[tuple[int, int]]:
+        """A cell of margin around every neighbour that can grow.
+
+        **The game blocks more than it draws**, and not only for items this editor made. A bare
+        Gaston 17 draws 2x1 and takes 4x2; weapons the game itself packed into a rifle case sit
+        two rows apart while each is stored one row tall. Anything dropped into that unseen
+        margin is an item the game cannot place, and it answers by mailing it - which is how a
+        stack of ammunition spawned next to an existing weapon ended up in the mailbox.
+
+        So the search treats every **resizable** neighbour as covering the most it could: its
+        drawn size or its `MaxSize`, whichever is larger, plus `ASSEMBLED_SLACK`. Ten stacks of
+        ammunition spawned into a tab that held weapons came back as three placed and seven in
+        the mailbox, which is what a margin that is too small looks like.
+
+        Nothing is written and no footprint changes - this only makes the editor pick a roomier
+        spot, which is why `test_placement_real.py` still measures the model against the save at
+        0 overlaps. Non-resizable neighbours are untouched: ammunition, attachments, medkits and
+        everything else that cannot grow, which is most of what sits in a tab.
+        """
+        margin: set[tuple[int, int]] = set()
+        for child_id in self.manager.get_children(str(container_id)):
+            child = self.manager.get_item(child_id) or {}
+            meta = self.game_item_meta_by_template_id.get(
+                str(child.get("TemplateId") or "").strip().lower(), {})
+            if not meta.get("is_resizable"):
+                continue
+            footprint = self._footprint_for_item(child_id)
+            if footprint is None:
+                continue
+            ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
+            ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
+            width = max(footprint[0], ceiling_w) + ASSEMBLED_SLACK[0]
+            height = max(footprint[1], ceiling_h) + ASSEMBLED_SLACK[1]
+            anchor = self.manager.cell_of(child_id)
+            margin |= {
+                (anchor[0] + di, anchor[1] + dj)
+                for di in range(width) for dj in range(height)
+            }
+        return margin
 
     def _is_bookkeeping_container(self, container_id: str) -> bool:
         """A container the game keeps for itself rather than one the player fills.
@@ -4268,13 +5158,23 @@ class SaveEditorGUI:
 
         return targets
 
-    def _ask_placement_target(self, title: str, same_container_id: str | None = None):
+    def _ask_placement_target(
+        self,
+        title: str,
+        same_container_id: str | None = None,
+        allow_inbox: bool = True,
+    ):
         """Lets the user pick where a new item goes. Returns a container id, the string
         "same" for the original's own container, or None when cancelled.
 
         A Combobox rather than a Listbox on purpose: a Listbox alongside entry fields
         silently loses its selection unless exportselection is off, and there is no reason
         to walk into that here.
+
+        `allow_inbox=False` is for an item that arrives with parts already fitted. The inbox
+        works by writing no position at all and letting the game deliver the item as mail;
+        whether it delivers a whole subtree that way is untested, so it is not offered rather
+        than offered and hoped for.
         """
         t = TRANSLATIONS[self.current_lang]
         targets = self._placement_targets()
@@ -4284,7 +5184,11 @@ class SaveEditorGUI:
         options.extend(targets)
         # Always available, and the only option left once everything is full: an item with no
         # grid position cannot be placed by the game, so it arrives as mail instead.
-        options.append(("inbox", t["target_inbox"]))
+        if allow_inbox:
+            options.append(("inbox", t["target_inbox"]))
+        if not options:
+            messagebox.showwarning(title, t["msg_place_no_targets"], parent=self.root)
+            return None
 
         win = tk.Toplevel(self.root)
         win.title(title)
@@ -4344,6 +5248,10 @@ class SaveEditorGUI:
             self._refresh_mailbox()
         elif selected_widget == self.tab_catalog:
             self._refresh_catalog_tree()
+        elif selected_widget == self.tab_crafting:
+            # Rebuilt on opening rather than after every item edit: what changes underneath it
+            # is what the store holds, and walking every item on each repair is wasted work.
+            self._refresh_crafting_tree()
         elif selected_widget == self.tab_char:
             # Park focus on the notebook *before* refreshing. Tk's own tab activation
             # focuses the first entry in the pane (the nickname field) unless the
@@ -4702,6 +5610,9 @@ class SaveEditorGUI:
                 quantity=quantity,
                 position=(i, j),
             )
+            # A weapon the game will not accept bare gets the parts its required slots
+            # demand - measured in play, a Gaston without its slide goes to the mailbox.
+            self._fill_required_slots(str(created["Id"]))
             if rotated or condition:
                 inner = created.setdefault("AdditionalData", {}).setdefault("_data", {})
                 if rotated:
@@ -4744,6 +5655,357 @@ class SaveEditorGUI:
         reopen = self._capture_open_member_ids()
         self._populate_scope_view(reopen_member_ids=reopen)
         self._mark_pending_changes(f"Added {added} catalog item(s) (not saved yet)")
+
+    # --- Assembled items from the game's own presets -----------------------------------
+    # `item_presets` is where the game keeps a weapon the way it ships it: the receiver, the
+    # barrel, the magazine, each in its slot. Spawning one is the catalog spawner plus the
+    # attachment logic - which is why this sits below both.
+
+    def _presets_for_template(self, template_id: str) -> list[dict]:
+        """The game's factory configurations for one template, `_Default` first.
+
+        Only 53 templates have any, all of them firearms, and 35 weapons share those 53 - a
+        `_Default` plus one or two `_MK*` variants.
+        """
+        key = str(template_id or "").strip().lower()
+        if not key:
+            return []
+        rows = [row for row in (self.presets_meta or []) if row.get("root") == key]
+        rows.sort(key=lambda row: (
+            "default" not in str(row.get("alias") or "").lower(),
+            str(row.get("alias") or "").lower(),
+        ))
+        return rows
+
+    def _preset_label(self, preset: dict) -> str:
+        """A preset's alias without the weapon's own name, which the row already carries."""
+        alias = str(preset.get("alias") or "").strip()
+        name = self._template_name_for_template_id(preset.get("root")) or ""
+        trimmed = alias.replace(" ", "")
+        compact = name.replace(" ", "").replace("-", "")
+        if compact and trimmed.lower().startswith(compact.lower()):
+            trimmed = trimmed[len(compact):].lstrip("_-") or alias
+        return trimmed.replace("_", " ").strip() or alias
+
+    def _free_slot_for_part(self, host_id: str, part_template_id: str) -> int | None:
+        """The first slot on this host that permits the part and is not taken yet.
+
+        A preset can name two parts a single slot type would accept, so the search has to look
+        at what is already fitted rather than at the template alone.
+        """
+        wanted = str(part_template_id or "").strip().lower()
+        host_template = str((self.manager.get_item(host_id) or {}).get("TemplateId") or "")
+        for index, slot in enumerate(self._mod_slots_of(host_template)):
+            allows = {str(a).strip().lower() for a in (slot.get("allows") or [])}
+            if wanted not in allows:
+                continue
+            if self.manager.slot_occupant(host_id, index) is None:
+                return index
+        return None
+
+    def _preset_grown_size(self, preset: dict) -> tuple[int, int] | None:
+        """What a preset's weapon will measure once its parts are on it, as an upper bound.
+
+        `resize` is the game's own statement of how much a part enlarges its host - a Gaston 17
+        suppressor is `{"width": 1}`, a drum magazine `{"height": 1}` - and summing it over the
+        fitted parts is the only expression of growth the data offers. It **overshoots**: across
+        a real save it predicts 139 of 162 grown items exactly and is too large for the rest, so
+        it is a ceiling on the growth and not the growth itself.
+
+        That is the right direction for reserving room, and it is why this exists next to
+        `MaxSize`: for 8 of the 53 presets the sum lands **above** the root's own `MaxSize`
+        (LM39, M420, MKP, PRO90 MK1 and MK2, Ronnie B4, SVS twice), and those are exactly the
+        configurations `MaxSize` alone would have left too little room for.
+        """
+        base = self._footprint_for_template(str(preset.get("root") or ""))
+        if base is None:
+            return None
+        width, height = base
+        for part in preset.get("parts") or []:
+            meta = self.game_item_meta_by_template_id.get(
+                str(part.get("template_id") or "").strip().lower(), {})
+            grow = meta.get("resize")
+            if isinstance(grow, dict):
+                width += int(grow.get("width") or 0)
+                height += int(grow.get("height") or 0)
+        return width, height
+
+    def _preset_outgrows_its_ceiling(self, preset: dict) -> bool:
+        """True when the finished weapon would be at or past what its template says it can grow to.
+
+        **The game refuses to place such an item and hands it over as mail, in pieces** -
+        measured in play on 2026-07-30 with `Gaston17_MK3`, whose parts add exactly its own
+        3x2 ceiling. The data agrees that this is a property of the configuration rather than of
+        the spot: **no item in a real save sits at its own `MaxSize`** - 0 of 19 that carry both
+        numbers - and 17 of the 53 presets predict a size at or above it.
+
+        So this is not a placement problem the editor can solve by looking harder for a spot,
+        and the dialog says so before spawning instead of letting it fail silently.
+
+        **Over on an axis, or level on both** - 17 of the 53. Touching the ceiling on only one
+        axis is deliberately not flagged, and that line is where the evidence runs out: the
+        prediction overshoots (see `_preset_grown_size`), so a single axis reading "level" may
+        really be under, and the configuration that failed had *both* axes level. Flagging one
+        axis would warn on 33 of 53, including variants of the 1A4M whose plain version spawned
+        cleanly in play. Warning about two thirds of the list on a hunch is its own kind of lie.
+        """
+        grown = self._preset_grown_size(preset)
+        meta = self.game_item_meta_by_template_id.get(
+            str(preset.get("root") or "").strip().lower(), {})
+        ceiling = (meta.get("max_width"), meta.get("max_height"))
+        if grown is None or not all(isinstance(value, int) for value in ceiling):
+            return False
+        if grown[0] > ceiling[0] or grown[1] > ceiling[1]:
+            return True
+        return grown[0] == ceiling[0] and grown[1] == ceiling[1]
+
+    def _assembled_reservation(self, template_id: str) -> tuple[int, int] | None:
+        """How much room to keep free for a weapon that will arrive with parts on it.
+
+        **`MaxSize`, not the template size** - and this is the one place that reads it, against
+        the rule everywhere else. The first version reserved the template size and the game put
+        every spawned weapon in the mailbox, which is what it does with an item it cannot place:
+        it computes the assembled size itself and found the neighbouring cells taken.
+
+        That size cannot be computed here. Measured across a real save's 26 hosts that carry
+        one: it is **deterministic per (weapon, parts) combination** - 24 combinations, none
+        contradicting another - so the game does derive it, but no simple rule reproduces it.
+        The template size matches 7 of 26, the bounding box of the parts 7, and "base width plus
+        the parts' widths" **0**. A 1A4M assembled is 3x1 against a 2x1 template, a Herstal SH
+        4x1, a Neckar SR93 5x1 against a 1x1 template.
+
+        `MaxSize` is above every observed value, so it is a safe ceiling even though it is not
+        the answer - and `ASSEMBLED_SLACK` goes on top, because in play a bare Gaston blocked one
+        cell more than its own ceiling. Nothing false is written into the save; this is only how
+        much space the search keeps clear.
+        """
+        meta = self.game_item_meta_by_template_id.get(
+            str(template_id or "").strip().lower(), {})
+        width, height = meta.get("max_width"), meta.get("max_height")
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            return width + ASSEMBLED_SLACK[0], height + ASSEMBLED_SLACK[1]
+        # One preset root (template 6x2) carries no MaxSize at all. Its own size is then the
+        # best statement available.
+        return self._footprint_for_template(template_id)
+
+    def _fill_required_slots(self, item_id: str, _depth: int = 0) -> int:
+        """Puts the parts a template's **required** slots demand into a freshly created item.
+
+        A weapon spawned bare is not a thing the game accepts. Measured in play on 2026-07-30:
+        an assembled Gaston 17 stays where it is put, while the same pistol spawned with no parts
+        lands in the mailbox even with room to spare - and the data says why. Its slide slot
+        carries `IsRequiredToEquip`, so a Gaston without a slide is missing something the game
+        insists on. **75 templates have such a slot, and 52 of the 53 preset roots are among
+        them**, which is exactly why the assembled presets work and a bare spawn does not.
+
+        Recursive, because the requirement chains: a Gaston needs a slide, and the slide needs a
+        barrel. Every required slot in the report names a `default_template_id` - 0 of them do
+        not - so what to put in is never a guess. Depth is capped anyway; the data is not
+        trusted to be free of a loop just because it currently is.
+
+        Returns how many parts were created. Slots that are already filled are left alone, which
+        is what makes it safe to run over a preset that has done most of the work already.
+        """
+        if _depth > 4:
+            return 0
+        item = self.manager.get_item(item_id) or {}
+        created = 0
+        for index, slot in enumerate(self._mod_slots_of(str(item.get("TemplateId") or ""))):
+            if not slot.get("required"):
+                continue
+            # A fast path rather than a rule: `attach_item` refuses an occupied slot anyway and
+            # the part created for it is deleted again, so no test can tell the difference. It
+            # is here to skip that churn when running over a preset that filled most slots.
+            if self.manager.slot_occupant(str(item_id), index) is not None:
+                continue
+            default = str(slot.get("default_template_id") or "").strip().lower()
+            if not default:
+                continue
+            meta = self.game_item_meta_by_template_id.get(default, {})
+            part = self.manager.add_inventory_item(
+                parent_id=str(item_id),
+                template_id=default,
+                width=meta.get("width") if isinstance(meta.get("width"), int) else None,
+                height=meta.get("height") if isinstance(meta.get("height"), int) else None,
+            )
+            if not self.manager.attach_item(str(part["Id"]), str(item_id), index):
+                self.manager.delete_item(str(part["Id"]))
+                continue
+            created += 1 + self._fill_required_slots(str(part["Id"]), _depth + 1)
+        return created
+
+    def _spawn_preset(self, preset: dict, parent_id: str) -> tuple[str | None, int, int]:
+        """Creates the whole preset. Returns (root item id, parts fitted, parts skipped).
+
+        The root is placed like any spawned item except for how much room is kept free - see
+        `_assembled_reservation`. Each part is then created inside its host and attached to the
+        slot that takes it. A part whose host has no free slot for it is counted and skipped
+        rather than left lying loose inside the weapon, where the game would have to deal with
+        a child at a cell that is not a slot.
+        """
+        root_template = str(preset.get("root") or "")
+        meta = self.game_item_meta_by_template_id.get(root_template, {})
+        footprint = self._footprint_for_template(root_template)
+        ceiling = self._assembled_reservation(root_template)
+        grown = self._preset_grown_size(preset)
+        if footprint is None or ceiling is None:
+            return None, 0, 0
+        # Whichever of the two says more. `MaxSize` is what the template claims it can grow to,
+        # the sum of the parts' `resize` is what this configuration adds; for 8 of the 53
+        # presets the second is the larger, and those are the ones MaxSize alone under-reserved.
+        reservation = (max(ceiling[0], (grown or ceiling)[0]),
+                       max(ceiling[1], (grown or ceiling)[1]))
+        spot = self._placement_in(parent_id, reservation[0], reservation[1])
+        if spot is None:
+            return None, 0, 0
+
+        i, j, rotated = spot
+        root = self.manager.add_inventory_item(
+            parent_id=parent_id,
+            template_id=root_template,
+            width=meta.get("width") if isinstance(meta.get("width"), int) else None,
+            height=meta.get("height") if isinstance(meta.get("height"), int) else None,
+            position=(i, j),
+        )
+        if rotated:
+            root.setdefault("AdditionalData", {}).setdefault(
+                "_data", {})["BaseComponent_rotated"] = True
+
+        # `parent` in the report is an index into the parts list, -1 for the root itself.
+        ids: dict[int, str] = {-1: str(root["Id"])}
+        fitted = skipped = 0
+        for index, part in enumerate(preset.get("parts") or []):
+            host_id = ids.get(int(part.get("parent", -1)))
+            template_id = str(part.get("template_id") or "").strip().lower()
+            if not host_id or not template_id:
+                skipped += 1
+                continue
+            slot_index = self._free_slot_for_part(host_id, template_id)
+            if slot_index is None:
+                skipped += 1
+                continue
+            part_meta = self.game_item_meta_by_template_id.get(template_id, {})
+            created = self.manager.add_inventory_item(
+                parent_id=host_id,
+                template_id=template_id,
+                width=part_meta.get("width") if isinstance(part_meta.get("width"), int) else None,
+                height=(
+                    part_meta.get("height")
+                    if isinstance(part_meta.get("height"), int) else None
+                ),
+            )
+            # Already a child of its host, so this only writes the slot - and writes it the
+            # way the game does, which for slot 0 means no Position at all.
+            if not self.manager.attach_item(str(created["Id"]), host_id, slot_index):
+                self.manager.delete_item(str(created["Id"]))
+                skipped += 1
+                continue
+            ids[index] = str(created["Id"])
+            fitted += 1
+
+        # The preset fills the weapon's own required slots; a part it brought may still have one
+        # of its own standing empty, and the game is as strict about those.
+        fitted += self._fill_required_slots(str(root["Id"]))
+        return str(root["Id"]), fitted, skipped
+
+    def _spawn_preset_for_selected_catalog_row(self) -> None:
+        """Spawns a catalog template as the game builds it, parts included."""
+        t = TRANSLATIONS[self.current_lang]
+        selection = self._selected_catalog_template()
+        if not selection:
+            return
+        template_id = selection[0]
+
+        presets = self._presets_for_template(template_id)
+        if not presets:
+            messagebox.showinfo(t["preset_title"], t["preset_none"], parent=self.root)
+            return
+
+        preset = presets[0]
+        if len(presets) > 1:
+            chosen = self._pick_preset(presets)
+            if chosen is None:
+                return
+            preset = chosen
+
+        if self._preset_outgrows_its_ceiling(preset):
+            grown = self._preset_grown_size(preset)
+            meta = self.game_item_meta_by_template_id.get(str(preset.get("root") or ""), {})
+            if not messagebox.askyesno(
+                    t["preset_title"],
+                    t["preset_outgrown"].format(
+                        name=self._template_name_for_template_id(template_id) or template_id,
+                        grown=f"{grown[0]}x{grown[1]}" if grown else "?",
+                        ceiling=f"{meta.get('max_width')}x{meta.get('max_height')}"),
+                    parent=self.root):
+                return
+
+        # No inbox: an assembled weapon is a subtree, and mail delivery of a subtree is
+        # untested. Every other destination is a real container with a real grid.
+        target = self._ask_placement_target(t["preset_title"], allow_inbox=False)
+        if not target:
+            return
+
+        root_id, fitted, skipped = self._spawn_preset(preset, target)
+        if root_id is None:
+            messagebox.showwarning(t["preset_title"], t["preset_no_space"], parent=self.root)
+            return
+
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        name = self._template_name_for_template_id(template_id) or template_id
+        self._mark_pending_changes(
+            t["status_preset"].format(name=name, parts=fitted))
+        if skipped:
+            messagebox.showinfo(
+                t["preset_title"], t["preset_partial"].format(skipped=skipped),
+                parent=self.root)
+
+    def _pick_preset(self, presets: list[dict]) -> dict | None:
+        """Which configuration is meant, when a weapon ships more than one."""
+        t = TRANSLATIONS[self.current_lang]
+        win = tk.Toplevel(self.root)
+        win.title(t["preset_title"])
+        win.configure(bg="#1e1e1e")
+        win.transient(self.root)
+
+        ttk.Label(win, text=t["preset_prompt"], wraplength=520).pack(
+            anchor="w", padx=12, pady=(12, 6))
+        tree = ttk.Treeview(win, columns=("parts",), show="tree headings",
+                            height=min(max(len(presets), 3), 10), selectmode="browse")
+        tree.heading("#0", text=t["preset_col_variant"])
+        tree.heading("parts", text=t["preset_col_parts"])
+        tree.column("#0", width=260, anchor="w")
+        tree.column("parts", width=300, anchor="w")
+        for index, preset in enumerate(presets):
+            parts = [
+                self._template_name_for_template_id(part.get("template_id"))
+                or str(part.get("template_id"))
+                for part in preset.get("parts") or []
+            ]
+            tree.insert("", "end", iid=str(index), text=self._preset_label(preset),
+                        values=(", ".join(parts),))
+        tree.selection_set("0")
+        tree.pack(fill="both", expand=True, padx=12)
+
+        chosen: list[dict] = []
+
+        def confirm() -> None:
+            selection = tree.selection()
+            if selection:
+                chosen.append(presets[int(selection[0])])
+            win.destroy()
+
+        buttons = ttk.Frame(win)
+        buttons.pack(fill="x", padx=12, pady=12)
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right")
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(
+            side="right", padx=(0, 8))
+        tree.bind("<Double-Button-1>", lambda _e: confirm())
+
+        self._center_toplevel(win)
+        win.grab_set()
+        win.wait_window()
+        return chosen[0] if chosen else None
 
     # --- Trader offers ----------------------------------------------------------------
     # An offer slot is overwritten rather than added, because the game rebuilds a trader's
@@ -4991,24 +6253,53 @@ class SaveEditorGUI:
             self.tree.delete(iid)
         self.entry_members.clear()
         self.loaded_nodes.clear()
+        self._search_match_cache.clear()
 
         scope, start_ids = self._scope_start_ids()
-        self._insert_entries("", start_ids)
+        query = self._search_query()
+        self._insert_entries("", start_ids, query)
 
         if reopen_member_ids:
             for root_iid in self.tree.get_children(""):
                 self._restore_open_nodes(root_iid, reopen_member_ids)
 
-        self._set_status(f"Scope: {scope} | Save: {self.save_path}")
+        status = f"Scope: {scope} | Save: {self.save_path}"
+        if query:
+            matches = sum(
+                1
+                for start in start_ids
+                for member in self.manager.collect_subtree(start)
+                if self._item_matches_search(member, query)
+            )
+            search_text = TRANSLATIONS[self.current_lang]["status_search"].format(
+                query=self.search_var.get().strip(), count=matches,
+            )
+            status = f"Scope: {scope} | {search_text} | Save: {self.save_path}"
+        self._set_status(status)
 
-    def _insert_entries(self, parent_iid: str, item_ids: list[str]) -> None:
+    def _insert_entries(self, parent_iid: str, item_ids: list[str], query: str = "") -> None:
+        if query:
+            item_ids = [
+                item_id for item_id in item_ids
+                if self._subtree_matches_search(item_id, query)
+            ]
         entries = build_entries(self.manager, item_ids)
         for members in entries:
             display_text = self._render_entry_text(members)
             iid = self.tree.insert(parent_iid, "end", text=display_text)
             self.entry_members[iid] = members
 
-            if len(members) == 1 and self.manager.get_children(members[0]):
+            children = self.manager.get_children(members[0]) if len(members) == 1 else []
+            if not children:
+                continue
+            if query and not self._item_matches_search(members[0], query):
+                # This row survived the filter only because something inside it matched, so
+                # that branch is shown open. A lazy placeholder would hide the actual hit
+                # behind a container the user has no reason to suspect.
+                self._insert_entries(iid, children, query)
+                self.loaded_nodes.add(iid)
+                self.tree.item(iid, open=True)
+            else:
                 self.tree.insert(iid, "end", text="")
 
     def _on_tree_open(self, _event: tk.Event) -> None:
@@ -5342,16 +6633,26 @@ class SaveEditorGUI:
         item_id = self._selected_item_id()
         if not item_id:
             return
+        self._move_item_interactive(item_id)
+
+    def _move_item_interactive(self, item_id: str) -> bool:
+        """Asks for a destination container and moves one item there.
+
+        Returns True when something moved. Split out from `_move_selected` because taking a
+        part off a weapon is the same question once the part has been named - the alternative
+        was a second copy of the placement handling, which is where the interesting mistakes
+        live.
+        """
         t = TRANSLATIONS[self.current_lang]
 
         if self.manager.is_structural(item_id):
             messagebox.showwarning(t["move_title"], t["move_structural"], parent=self.root)
-            return
+            return False
 
         origin_parent = str((self.manager.get_item(item_id) or {}).get("ParentId") or "")
         target = self._ask_placement_target(t["move_title"])
         if not target:
-            return
+            return False
 
         # The inbox is not a container: an item with no valid cell is what the game hands
         # you as mail, so it keeps its parent and loses its position instead.
@@ -5359,13 +6660,13 @@ class SaveEditorGUI:
             parent_id, spot = origin_parent, (-1, -1, False)
             if not parent_id:
                 messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
-                return
+                return False
         else:
             parent_id = target
             footprint = self._footprint_for_item(item_id)
             if footprint is None:
                 messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
-                return
+                return False
             # The item's own cells are still counted as taken while the spot is searched.
             # Harmless for a move into another container, and for a move inside the same one
             # it only means the item never lands on the spot it already occupies.
@@ -5381,13 +6682,13 @@ class SaveEditorGUI:
                         target=target_label, width=footprint[0], height=footprint[1]),
                     parent=self.root,
                 )
-                return
+                return False
 
         i, j, rotated = spot
         moved = self.manager.move_item(item_id, parent_id, position=(i, j))
         if not moved:
             messagebox.showerror(t["move_title"], t["move_failed"], parent=self.root)
-            return
+            return False
 
         item = self.manager.get_item(item_id) or {}
         inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
@@ -5401,6 +6702,7 @@ class SaveEditorGUI:
         self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
         self._mark_pending_changes(
             t["status_moved"].format(count=len(moved), target=target_label))
+        return True
 
     def _split_selected(self) -> None:
         """Takes part of a stack off into a second stack."""
@@ -5463,40 +6765,525 @@ class SaveEditorGUI:
         self._mark_pending_changes(
             t["status_split"].format(amount=amount, quantity=quantity))
 
+    # --- Attachments ------------------------------------------------------------------
+    # The item info window already answers "what fits here" and "where does this go". These
+    # turn the same data into an edit: the slot a part sits in is its `Position.I`, so fitting
+    # a part is a move that also names a slot.
+
+    def _own_items_for_slot(self, host_id: str, slot: dict) -> list[str]:
+        """The player's own items that a slot permits, minus the host's own subtree.
+
+        A part already fitted to *another* weapon is deliberately included - taking a scope
+        off one gun and onto the next is the same operation, and `attach_item` carries the
+        dicts between origin lists on the way.
+        """
+        allows = {str(a).strip().lower() for a in (slot.get("allows") or [])}
+        if not allows:
+            return []
+        forbidden = set(self.manager.collect_subtree(str(host_id)))
+        found = [
+            str(item.get("Id"))
+            for item in self.manager.get_all_items_flat()
+            if str(item.get("Id") or "") not in forbidden
+            and str(item.get("TemplateId") or "").strip().lower() in allows
+        ]
+        found.sort(key=lambda i: ((self._template_name_for_item_id(i) or "").lower(), i))
+        return found
+
+    def _own_hosts_for(self, item_id: str) -> list[tuple[str, int, str]]:
+        """(host id, slot index, slot name) for each owned item with a free slot this fits.
+
+        The index is the slot's position in the host template's own slot list, which is what
+        the save records in `Position.I`. An occupied slot is left out rather than offered and
+        then refused - except where this very item is the occupant, so a part can be shown in
+        the slot it already sits in.
+        """
+        template_id = str(
+            (self.manager.get_item(item_id) or {}).get("TemplateId") or "").strip().lower()
+        if not template_id:
+            return []
+        subtree = set(self.manager.collect_subtree(str(item_id)))
+        out: list[tuple[str, int, str]] = []
+        for host in self.manager.get_all_items_flat():
+            host_id = str(host.get("Id") or "")
+            if not host_id or host_id in subtree:
+                continue
+            for index, slot in enumerate(
+                    self._mod_slots_of(str(host.get("TemplateId") or ""))):
+                allows = {str(a).strip().lower() for a in (slot.get("allows") or [])}
+                if template_id not in allows:
+                    continue
+                occupant = self.manager.slot_occupant(host_id, index)
+                if occupant is not None and occupant != str(item_id):
+                    continue
+                out.append((host_id, index, self._slot_label(slot)))
+        out.sort(key=lambda row: (
+            (self._template_name_for_item_id(row[0]) or "").lower(), row[1]))
+        return out
+
+    def _grown_host_is_cramped(self, host_id: str, incoming: str | None = None) -> bool:
+        """True when a host has no room left to grow into where it sits.
+
+        **Confirmed in play on 2026-07-30, and not the way round I had assumed**: fitting a part
+        onto a weapon that cannot grow puts *the part* in the mailbox, not the weapon. The game
+        keeps the host where it is and evicts what it could not fit. So this is asked **before**
+        anything is staged, and the answer decides whether the user wants to go ahead.
+
+        `incoming` is the part about to be fitted. Its own cells are excluded, because it stops
+        occupying them the moment it goes into the slot - without that, a scope lying next to the
+        rifle in the same tab would raise a false alarm about itself.
+
+        `MaxSize` is the yardstick, so this errs towards asking too often: it is a ceiling rather
+        than the real assembled size (see `_assembled_reservation`). That is the acceptable
+        direction - the other one loses the part to the mail.
+
+        Returns False whenever the question cannot be asked, and **one check covers every such
+        case**: `_container_cells_for` answers None for an id that is not an item at all (an
+        equipped host has no parent), and None for a host that is itself fitted into something,
+        because a weapon's attachment points are not a modelled grid. Guards for those two were
+        written first and both turned out to be unreachable - a mutation run proved it by
+        removing them without a single test noticing.
+        """
+        host = self.manager.get_item(host_id) or {}
+        parent_id = str(host.get("ParentId") or "")
+        cells = self._container_cells_for(parent_id)
+        reservation = self._assembled_reservation(str(host.get("TemplateId") or ""))
+        if not cells or reservation is None:
+            return False
+
+        anchor = self.manager.cell_of(host_id)
+        own = set(self.manager.collect_subtree(host_id))
+        if incoming:
+            own |= set(self.manager.collect_subtree(str(incoming)))
+        # The neighbours' cells are unioned one item at a time rather than read out of
+        # `occupied_cells`, which keeps a single holder per cell: once the host is modelled
+        # generously its own area overwrites a neighbour's entry, and filtering by holder then
+        # drops the very overlap this is looking for. Found by a test that would not go red.
+        taken: set[tuple[int, int]] = set()
+        for sibling in self.manager.get_children(parent_id):
+            if sibling in own:
+                continue
+            footprint = self._footprint_for_item(sibling)
+            if footprint is None:
+                continue
+            base = self.manager.cell_of(sibling)
+            taken |= {
+                (base[0] + di, base[1] + dj)
+                for di in range(footprint[0]) for dj in range(footprint[1])
+            }
+        wanted = {
+            (anchor[0] + di, anchor[1] + dj)
+            for di in range(reservation[0]) for dj in range(reservation[1])
+        }
+        return bool(wanted - cells or wanted & taken)
+
+    def _confirm_cramped_host(self, host_id: str, part_id: str) -> bool:
+        """Asks before fitting a part onto a host with no room to grow. True to go ahead.
+
+        A question rather than a refusal, because the yardstick is a ceiling: plenty of cramped
+        spots still work, and the user is the one who can see the grid.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        if not self._grown_host_is_cramped(host_id, incoming=part_id):
+            return True
+        return bool(messagebox.askyesno(
+            t["attach_title"],
+            t["attach_cramped"].format(
+                name=self._template_name_for_item_id(host_id) or host_id,
+                part=self._template_name_for_item_id(part_id) or part_id),
+            parent=self.root,
+        ))
+
+    def _attach_and_report(
+        self, item_id: str, host_id: str, slot_index: int, slot_label: str
+    ) -> bool:
+        """Fits one part and tells the user, or says why it did not happen."""
+        t = TRANSLATIONS[self.current_lang]
+        part_name = self._template_name_for_item_id(item_id) or item_id
+        moved = self.manager.attach_item(item_id, host_id, slot_index)
+        if not moved:
+            messagebox.showerror(t["attach_title"], t["attach_failed"], parent=self.root)
+            return False
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._mark_pending_changes(
+            t["status_attached"].format(part=part_name, slot=slot_label))
+        return True
+
+    def _pick_owned_item(self, title: str, prompt: str, candidates: list[str]) -> str | None:
+        """Asks which of the player's own items is meant, naming where each one sits.
+
+        Two items of the same template are told apart by their location, which is the only
+        thing that differs - a scope in the warehouse and the same scope on a rifle.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.configure(bg="#1e1e1e")
+        win.transient(self.root)
+
+        ttk.Label(win, text=prompt, wraplength=520).pack(anchor="w", padx=12, pady=(12, 6))
+        # exportselection=False: without it the selection is dropped the moment anything
+        # else in the app takes the system selection, and curselection() comes back empty.
+        box = tk.Listbox(
+            win, height=min(max(len(candidates), 4), 14), width=70, exportselection=False,
+            bg="#252526", fg="#d4d4d4", selectbackground="#0e639c", activestyle="none",
+        )
+        for candidate in candidates:
+            name = self._template_name_for_item_id(candidate) or candidate
+            box.insert("end", f"{name}   ({self._item_location_text(candidate)})")
+        if candidates:
+            box.selection_set(0)
+        box.pack(fill="both", expand=True, padx=12)
+
+        chosen: list[str] = []
+
+        def confirm() -> None:
+            selection = box.curselection()
+            if selection:
+                chosen.append(candidates[selection[0]])
+            win.destroy()
+
+        buttons = ttk.Frame(win)
+        buttons.pack(fill="x", padx=12, pady=12)
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right")
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(
+            side="right", padx=(0, 8))
+        box.bind("<Double-Button-1>", lambda _e: confirm())
+
+        self._center_toplevel(win)
+        win.grab_set()
+        win.wait_window()
+        return chosen[0] if chosen else None
+
+    def _open_attachments_dialog(self) -> None:
+        """Fit parts into an item's slots, and take fitted parts off again.
+
+        One window for both directions, because one item is often both: a receiver carries
+        slots *and* goes into a weapon. Each half is shown only when it applies, the same rule
+        the amount/target dialog follows.
+        """
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        t = TRANSLATIONS[self.current_lang]
+        template_id = str((self.manager.get_item(item_id) or {}).get("TemplateId") or "")
+
+        if not self._mod_slots_of(template_id) and not self._own_hosts_for(item_id):
+            messagebox.showinfo(t["attach_title"], t["attach_nothing"], parent=self.root)
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title(t["attach_title"])
+        win.configure(bg="#1e1e1e")
+        win.transient(self.root)
+
+        header = ttk.Label(
+            win,
+            text=t["attach_for"].format(
+                name=self._template_name_for_item_id(item_id) or item_id),
+            style="InfoTitle.TLabel",
+        )
+        header.pack(anchor="w", padx=12, pady=(12, 4))
+        ttk.Label(win, text=t["attach_hint"], wraplength=560, justify="left").pack(
+            anchor="w", padx=12, pady=(0, 8))
+
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True)
+
+        def render() -> None:
+            """Rebuilt after every change, because fitting a part moves it between both
+            lists - the slot fills and the item stops being loose."""
+            for child in body.winfo_children():
+                child.destroy()
+
+            slots = self._mod_slots_of(template_id)
+            if slots:
+                ttk.Label(body, text=t["attach_own_slots"],
+                          style="InfoSection.TLabel").pack(anchor="w", padx=12)
+                tree = ttk.Treeview(body, columns=("slot", "fitted", "note"), show="headings",
+                                    height=min(max(len(slots), 3), INFO_MOD_ROWS),
+                                    selectmode="browse")
+                for column, title, width in (
+                    ("slot", t["attach_col_slot"], 200),
+                    ("fitted", t["attach_col_fitted"], 250),
+                    ("note", "", 90),
+                ):
+                    tree.heading(column, text=title)
+                    tree.column(column, width=width, anchor="w")
+
+                for index, slot in enumerate(slots):
+                    occupant = self.manager.slot_occupant(item_id, index)
+                    fitted = (
+                        self._template_name_for_item_id(occupant) or occupant
+                        if occupant else t["attach_free"]
+                    )
+                    tree.insert("", "end", iid=str(index), values=(
+                        self._slot_label(slot),
+                        fitted,
+                        t["attach_required"] if slot.get("required") else "",
+                    ))
+                tree.pack(fill="both", expand=True, padx=12, pady=(4, 6))
+
+                def selected_slot() -> int | None:
+                    selection = tree.selection()
+                    if not selection:
+                        messagebox.showinfo(t["attach_title"], t["attach_select_slot"],
+                                            parent=win)
+                        return None
+                    return int(selection[0])
+
+                def fit_part() -> None:
+                    index = selected_slot()
+                    if index is None:
+                        return
+                    slot = slots[index]
+                    label = self._slot_label(slot)
+                    occupant = self.manager.slot_occupant(item_id, index)
+                    if occupant:
+                        messagebox.showinfo(
+                            t["attach_title"],
+                            t["attach_slot_taken"].format(
+                                name=self._template_name_for_item_id(occupant) or occupant),
+                            parent=win)
+                        return
+                    candidates = self._own_items_for_slot(item_id, slot)
+                    if not candidates:
+                        messagebox.showinfo(
+                            t["attach_title"],
+                            t["attach_none_owned"].format(slot=label), parent=win)
+                        return
+                    part = self._pick_owned_item(
+                        t["attach_pick_title"],
+                        t["attach_pick_prompt"].format(slot=label),
+                        candidates,
+                    )
+                    if not part or not self._confirm_cramped_host(item_id, part):
+                        return
+                    if self._attach_and_report(part, item_id, index, label):
+                        render()
+
+                def detach_part() -> None:
+                    index = selected_slot()
+                    if index is None:
+                        return
+                    occupant = self.manager.slot_occupant(item_id, index)
+                    if not occupant:
+                        return
+                    # Taking a part off is a move into a container, so it asks the same
+                    # question and reuses the same placement handling.
+                    if self._move_item_interactive(occupant):
+                        render()
+
+                row = ttk.Frame(body)
+                row.pack(fill="x", padx=12, pady=(0, 10))
+                ttk.Button(row, text=t["attach_btn_fit"], command=fit_part).pack(side="left")
+                ttk.Button(row, text=t["attach_btn_detach"], command=detach_part).pack(
+                    side="left", padx=(8, 0))
+
+            hosts = self._own_hosts_for(item_id)
+            if hosts:
+                ttk.Separator(body, orient="horizontal").pack(fill="x", padx=12, pady=(2, 8))
+                ttk.Label(body, text=t["attach_hosts"],
+                          style="InfoSection.TLabel").pack(anchor="w", padx=12)
+                host_tree = ttk.Treeview(
+                    body, columns=("host", "slot", "where"), show="headings",
+                    height=min(max(len(hosts), 3), INFO_MOD_ROWS), selectmode="browse")
+                for column, title, width in (
+                    ("host", t["attach_col_host"], 200),
+                    ("slot", t["attach_col_slot"], 150),
+                    ("where", t["attach_col_where"], 190),
+                ):
+                    host_tree.heading(column, text=title)
+                    host_tree.column(column, width=width, anchor="w")
+                for position, (host_id, index, label) in enumerate(hosts):
+                    host_tree.insert("", "end", iid=str(position), values=(
+                        self._template_name_for_item_id(host_id) or host_id,
+                        label,
+                        self._item_location_text(host_id),
+                    ))
+                host_tree.pack(fill="both", expand=True, padx=12, pady=(4, 6))
+
+                def fit_here() -> None:
+                    selection = host_tree.selection()
+                    if not selection:
+                        messagebox.showinfo(t["attach_title"], t["attach_select_host"],
+                                            parent=win)
+                        return
+                    host_id, index, label = hosts[int(selection[0])]
+                    if not self._confirm_cramped_host(host_id, item_id):
+                        return
+                    if self._attach_and_report(item_id, host_id, index, label):
+                        render()
+
+                ttk.Button(body, text=t["attach_btn_fit_here"], command=fit_here).pack(
+                    anchor="w", padx=12, pady=(0, 10))
+
+        render()
+        ttk.Button(win, text=t["btn_close"], command=win.destroy).pack(pady=(0, 12))
+        self._center_toplevel(win)
+        win.grab_set()
+        win.wait_window()
+
     # --- Item info --------------------------------------------------------------------
     # Read-only throughout. Nothing in this dialog writes to the save; the one button that
     # does anything puts the template id on the clipboard.
 
-    def _recycler_level(self) -> int | None:
-        """How far the player's own Recycler is built, or None when there is no module.
+    def _shelter_module_levels(self) -> dict[str, int]:
+        """Foundation id -> how far that module is built, for every module in the save.
 
         The save records shelter modules as items carrying two abbreviated fields:
         `ShelterModuleComponent_smf` names the foundation, `ShelterModuleComponent_cl` the
         level. The level is missing on six of a real save's 24 modules, which by the
-        serializer's own rule means zero - an unbuilt foundation rather than an unknown one.
-        A zero is therefore reported as "not built", the same as no module at all.
+        serializer's own rule means zero - an unbuilt foundation rather than an unknown one -
+        so a missing value is recorded as 0 rather than left out.
         """
-        foundation = str((self.craft_meta or {}).get("recycler_foundation_id") or "")
-        if not foundation:
-            return None
+        levels: dict[str, int] = {}
         for item in self.manager.get_all_items_flat():
             inner = (item.get("AdditionalData") or {}).get("_data") or {}
             if not isinstance(inner, dict):
                 continue
-            if str(inner.get("ShelterModuleComponent_smf") or "").strip().lower() != foundation:
+            foundation = str(inner.get("ShelterModuleComponent_smf") or "").strip().lower()
+            if not foundation:
                 continue
             level = inner.get("ShelterModuleComponent_cl")
-            if isinstance(level, int) and not isinstance(level, bool) and level > 0:
-                return level
+            levels[foundation] = (
+                level if isinstance(level, int) and not isinstance(level, bool) else 0
+            )
+        return levels
+
+    def _recycler_level(self) -> int | None:
+        """How far the player's own Recycler is built, or None when it is not built at all.
+
+        A zero is reported as "not built", the same as no module: the recycling section says
+        so rather than marking a stage the player cannot reach.
+        """
+        foundation = str((self.craft_meta or {}).get("recycler_foundation_id") or "")
+        if not foundation:
             return None
+        level = self._shelter_module_levels().get(foundation)
+        return level if isinstance(level, int) and level > 0 else None
+
+    def _caliber_of(self, template_id: str) -> dict | None:
+        meta = self.game_item_meta_by_template_id.get(str(template_id or "").strip().lower())
+        caliber = (meta or {}).get("caliber")
+        return caliber if isinstance(caliber, dict) else None
+
+    def _caliber_partners(self, template_id: str) -> tuple[str, list[str]]:
+        """The other side of a caliber: cartridges for a weapon, weapons for a cartridge.
+
+        Returns `(role, template_ids)` where role is the *queried* item's own role, so the
+        caller knows which way round to label it. Built by scanning the catalog rather than
+        stored in the report - 131 rows is nothing to walk, and a second index in the report
+        would be one more thing to keep in step.
+        """
+        own = self._caliber_of(template_id)
+        if not own:
+            return "", []
+        wanted = "cartridge" if own.get("role") == "weapon" else "weapon"
+        partners = [
+            str(row.get("template_id"))
+            for row in self.game_item_catalog
+            if isinstance(row.get("caliber"), dict)
+            and row["caliber"].get("type") == own.get("type")
+            and row["caliber"].get("role") == wanted
+        ]
+        partners.sort(key=lambda tid: (self._template_name_for_template_id(tid) or tid).lower())
+        return str(own.get("role") or ""), partners
+
+    def _subcategory_label_for_id(self, subcategory_id: object) -> str | None:
+        if not isinstance(subcategory_id, int):
+            return None
+        if not hasattr(self, "_subcat_labels"):
+            self._subcat_labels = {
+                row["subcategory_id"]: row["subcategory_label"]
+                for row in self.game_item_catalog
+                if isinstance(row.get("subcategory_id"), int) and row.get("subcategory_label")
+            }
+        return self._subcat_labels.get(subcategory_id)
+
+    def _slot_own_label(self, slot: dict) -> str | None:
+        """A slot's name from the data, or None when nothing names it.
+
+        The game's own word wins where there is one: `ContainerSlots` entries on body parts
+        carry a `LocalizedName`, so an arm's slots are called "Hydraulics" and "Structure"
+        rather than being described by what fits in them. Weapon slots have no such name and
+        fall through to their contents.
+        """
+        own = slot.get("name")
+        if isinstance(own, str) and own.strip():
+            return own.strip()
+
+        labels: list[str] = []
+        for template_id in list(slot.get("allows") or []) + [slot.get("default_template_id")]:
+            meta = self.game_item_meta_by_template_id.get(
+                str(template_id or "").strip().lower(), {})
+            label = meta.get("subcategory_label")
+            if isinstance(label, str) and label.strip():
+                labels.append(label.strip())
+        if labels:
+            # The commonest one: a slot occasionally permits a stray part from elsewhere.
+            return Counter(labels).most_common(1)[0][0]
+        for subcategory_id in slot.get("allows_subcategories") or []:
+            label = self._subcategory_label_for_id(subcategory_id)
+            if label:
+                return label
         return None
 
+    def _slot_label(self, slot: dict) -> str:
+        """A name for an attachment point, taken from what it accepts.
+
+        Deliberately **not** a hardcoded table of `Type` numbers. The subcategory of the parts
+        a slot permits already names it - type 5 accepts Barrels, type 9 Receivers, type 2
+        Sights - and reading that from the data means a game update renumbering the types
+        cannot silently mislabel anything.
+
+        Three steps, because 27 of the 195 slots name no parts at all:
+
+        1. the slot's own permitted parts, or the subcategory it permits
+        2. **what slots of the same type accept elsewhere.** 18 sight mounts filter only by
+           tags, which the game files do not name - but other type-2 slots do name Sights, so
+           the type itself is nameable even where one slot is not. Still derived from the data.
+        3. the bare type number, if no slot of that type is nameable anywhere
+        """
+        t = TRANSLATIONS[self.current_lang]
+        own = self._slot_own_label(slot)
+        if own:
+            return own
+
+        if not hasattr(self, "_slot_type_labels"):
+            votes: dict[object, Counter] = {}
+            for row in self.game_item_catalog:
+                for other in row.get("mod_slots") or []:
+                    if not isinstance(other, dict):
+                        continue
+                    label = self._slot_own_label(other)
+                    if label:
+                        votes.setdefault(other.get("type"), Counter())[label] += 1
+            self._slot_type_labels = {
+                slot_type: counter.most_common(1)[0][0]
+                for slot_type, counter in votes.items()
+            }
+        inferred = self._slot_type_labels.get(slot.get("type"))
+        if inferred:
+            return inferred
+        return t["info_slot_fallback"].format(type=slot.get("type"))
+
+    def _mod_slots_of(self, template_id: str) -> list[dict]:
+        meta = self.game_item_meta_by_template_id.get(str(template_id or "").strip().lower())
+        slots = (meta or {}).get("mod_slots")
+        return [s for s in slots if isinstance(s, dict)] if isinstance(slots, list) else []
+
     def _format_duration(self, seconds: int | None) -> str:
+        """A craft or recycle time. Seconds matter: 139 of the 150 workbench recipes and 96
+        recycling rows are set to 3 or 5 seconds - the developers' "instant" - and rounding
+        those to minutes showed every one of them as "0 min"."""
         t = TRANSLATIONS[self.current_lang]
         if not isinstance(seconds, int) or seconds <= 0:
             return t["info_none"]
         if seconds >= 3600:
             return t["info_hours"].format(hours=_trim_float(seconds / 3600.0))
+        if seconds < 60:
+            return t["info_seconds"].format(seconds=seconds)
         return t["info_minutes"].format(minutes=int(round(seconds / 60.0)))
 
     def _item_location_text(self, item_id: str) -> str:
@@ -5657,6 +7444,9 @@ class SaveEditorGUI:
             line.append(self._item_location_text(item_id))
             ttk.Label(this_one, text="   ".join(p for p in line if p)).pack(anchor="w")
 
+        self._build_ammo_section(body, key)
+        self._build_mod_slots_section(body, key)
+        self._build_fits_on_section(body, key)
         self._build_recycling_section(body, key)
         self._build_used_in_section(body, key)
 
@@ -5680,6 +7470,192 @@ class SaveEditorGUI:
         self._center_over_root(win)
         win.grab_set()
         self.root.wait_window(win)
+
+    def _build_ammo_section(self, body: ttk.Frame, template_id: str) -> None:
+        """Which cartridges a weapon takes, or which weapons take a cartridge.
+
+        The section is absent entirely for the 1464 templates that are neither - a "no
+        ammunition" line on a backpack is noise.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        role, partners = self._caliber_partners(template_id)
+        if not role:
+            return
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        head = ttk.Frame(body)
+        head.pack(fill="x")
+        ttk.Label(head, text=t["info_section_ammo"],
+                  style="InfoSection.TLabel").pack(side="left")
+        ttk.Label(head, text=(t["info_ammo_takes"] if role == "weapon"
+                              else t["info_ammo_fits"]),
+                  style="Hint.TLabel").pack(side="right")
+
+        if not partners:
+            # Measured as impossible for weapons - every one has a matching cartridge - but a
+            # cartridge for a weapon that was cut would land here.
+            ttk.Label(body, text=t["info_ammo_none"], wraplength=520,
+                      style="Hint.TLabel", justify="left").pack(anchor="w", pady=(4, 0))
+            return
+
+        names = [self._template_name_for_template_id(tid) or tid for tid in partners]
+        ttk.Label(body, text=", ".join(names), wraplength=520, justify="left").pack(
+            anchor="w", pady=(4, 0))
+
+    def _build_mod_slots_section(self, body: ttk.Frame, template_id: str) -> None:
+        """The attachment points, as a tree, because that is what they are.
+
+        Slots hang off components rather than off the weapon: a muzzle device fits the barrel,
+        the barrel fits the receiver, the receiver fits the weapon. Walking that chain is what
+        turns 195 flat slot records into an answer to "what goes on this gun".
+        """
+        t = TRANSLATIONS[self.current_lang]
+        slots = self._mod_slots_of(template_id)
+        if not slots:
+            return
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        ttk.Label(body, text=t["info_section_mods"],
+                  style="InfoSection.TLabel").pack(anchor="w")
+
+        wrap = ttk.Frame(body)
+        wrap.pack(fill="both", expand=True, pady=(4, 0))
+        tree = ttk.Treeview(wrap, columns=("note",), show="tree headings", height=10,
+                            selectmode="none")
+        tree.heading("#0", text="")
+        tree.heading("note", text="")
+        tree.column("#0", width=300, anchor="w")
+        tree.column("note", width=170, anchor="w")
+
+        rows = 0
+
+        def add(parent: str, owner_id: str, depth: int, seen: set[str]) -> None:
+            """One node per slot, and under it the parts that fit; recurse into each part
+            that carries slots of its own. `seen` guards against a part that permits an
+            ancestor, which would otherwise recurse forever."""
+            nonlocal rows
+            if depth > 4:
+                return
+            for slot in self._mod_slots_of(owner_id):
+                note = []
+                if slot.get("required"):
+                    note.append(t["info_mods_required"])
+                node = tree.insert(parent, "end", text=self._slot_label(slot),
+                                   values=("  ".join(note),), open=depth < 2)
+                rows += 1
+
+                for part_id in slot.get("allows") or []:
+                    is_default = part_id == slot.get("default_template_id")
+                    child = tree.insert(
+                        node, "end",
+                        text=self._template_name_for_template_id(part_id) or part_id,
+                        values=(t["info_mods_fitted"] if is_default else "",),
+                        open=False,
+                    )
+                    rows += 1
+                    if part_id not in seen:
+                        add(child, part_id, depth + 1, seen | {part_id})
+
+        add("", template_id, 0, {template_id})
+        # Measured across every template that has slots: at 12 visible rows the tallest window
+        # (Ramon 1891, KA74, 1A4M) came to 835px, which clips the Close button on a 768px
+        # screen. At INFO_MOD_ROWS the same window fits with room to spare, and the tree
+        # scrolls for the rest.
+        tree.configure(height=min(max(rows, 3), INFO_MOD_ROWS))
+        if rows > INFO_MOD_ROWS:
+            scroll = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scroll.set)
+            scroll.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+
+    def _fits_on(self, template_id: str) -> list[tuple[str, str]]:
+        """(host template id, slot name) for every item this one can end up on.
+
+        The reverse of `mod_slots`, and the direction you want when holding a scope rather than
+        a rifle. The answer is deliberately the **topmost** host, not the immediate one: a
+        scope's slot sits on a receiver, and "fits on 1A4M receiver" is precise but unhelpful -
+        worse for a host called `Pistol_06_Barrel_04`. Walking up gives the gun.
+
+        The top is not always a weapon. Since body parts and helmets carry slots too, hydraulics
+        come out as arms and legs and a visor as its helmet - which is the useful answer there
+        for exactly the same reason.
+
+        Cached, because it is a full pass over 1595 catalog rows and the window reopens often.
+        """
+        key = str(template_id or "").strip().lower()
+        if not key:
+            return []
+
+        if not hasattr(self, "_fits_on_index"):
+            direct: dict[str, list[tuple[str, str]]] = {}
+            for row in self.game_item_catalog:
+                host = str(row.get("template_id") or "").lower()
+                for slot in row.get("mod_slots") or []:
+                    if not isinstance(slot, dict):
+                        continue
+                    label = self._slot_label(slot)
+                    for part in slot.get("allows") or []:
+                        direct.setdefault(str(part).lower(), []).append((host, label))
+            self._fits_on_index = direct
+            self._fits_on_roots: dict[str, set[str]] = {}
+
+        def roots_of(part: str, seen: frozenset) -> set[str]:
+            """The topmost hosts above this part - a gun, a body part or a helmet. `seen`
+            breaks the cycle a part that permits one of its own ancestors would create."""
+            if part in self._fits_on_roots:
+                return self._fits_on_roots[part]
+            above = self._fits_on_index.get(part, [])
+            if not above:
+                return {part}
+            found: set[str] = set()
+            for host, _label in above:
+                if host in seen:
+                    found.add(host)
+                    continue
+                found |= roots_of(host, seen | {host}) or {host}
+            if len(seen) <= 1:
+                self._fits_on_roots[part] = found
+            return found
+
+        pairs = {
+            (root, label)
+            for host, label in self._fits_on_index.get(key, [])
+            for root in (roots_of(host, frozenset({key, host})) or {host})
+        }
+        return sorted(
+            pairs,
+            key=lambda pair: ((self._template_name_for_template_id(pair[0]) or pair[0]).lower(),
+                              pair[1]),
+        )
+
+    def _build_fits_on_section(self, body: ttk.Frame, template_id: str) -> None:
+        """Where an attachment goes. Only shown for items something actually accepts."""
+        t = TRANSLATIONS[self.current_lang]
+        hosts = self._fits_on(template_id)
+        if not hosts:
+            return
+
+        ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 8))
+        ttk.Label(body, text=t["info_section_fits_on"],
+                  style="InfoSection.TLabel").pack(anchor="w")
+
+        wrap = ttk.Frame(body)
+        wrap.pack(fill="both", expand=True, pady=(4, 0))
+        tree = ttk.Treeview(wrap, columns=("slot",), show="tree headings",
+                            height=min(len(hosts), INFO_MOD_ROWS), selectmode="none")
+        tree.heading("#0", text="")
+        tree.heading("slot", text="")
+        tree.column("#0", width=300, anchor="w")
+        tree.column("slot", width=170, anchor="w")
+        for host_id, slot_label in hosts:
+            tree.insert("", "end",
+                        text=self._template_name_for_template_id(host_id) or host_id,
+                        values=(slot_label,))
+        if len(hosts) > INFO_MOD_ROWS:
+            scroll = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scroll.set)
+            scroll.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
 
     def _build_recycling_section(self, body: ttk.Frame, template_id: str) -> None:
         """What the item turns into, one row per recycler stage, the player's own marked."""
@@ -6080,6 +8056,167 @@ class SaveEditorGUI:
         y = self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_height()) // 3
         win.geometry(f"+{max(0, x)}+{max(0, y)}")
 
+    # --- The change list ----------------------------------------------------------------
+    # One view, three uses: confirming an apply, previewing a restore, and comparing the save
+    # against a backup. All three are the same question - what is the difference between these
+    # two saves - so they share `core_utils.diff_saves` and the tree below.
+
+    def _read_save_file(self, path: Path) -> dict | None:
+        """A save from disk as a plain dict, or None when it cannot be read.
+
+        Used for the "before" side of every comparison, so it must not raise into a dialog:
+        the answer "the file cannot be read" is itself worth showing.
+        """
+        try:
+            with Path(path).open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _diff_against_disk(self) -> dict | None:
+        """What the staged edits would change in the file on disk."""
+        on_disk = self._read_save_file(Path(self.manager.save_path))
+        if on_disk is None:
+            return None
+        return diff_saves(on_disk, self.manager.data)
+
+    def _diff_row_text(self, row: dict) -> str:
+        """One item row: its name, and where it is."""
+        name = (
+            self._template_name_for_template_id(row.get("template_id"))
+            or str(row.get("template_id") or "")
+        )
+        parent = self._template_name_for_item_id(row.get("parent_id"))
+        return f"{name}  ({parent})" if parent else name
+
+    def _diff_value_text(self, value: object) -> str:
+        """A field value for display. `None` means the key is absent, which is a value in this
+        save format - the game omits any field holding its type's default - so it gets a word
+        of its own rather than being printed as "None"."""
+        t = TRANSLATIONS[self.current_lang]
+        if value is None:
+            return t["diff_absent"]
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def _fill_diff_tree(self, tree: ttk.Treeview, diff: dict) -> int:
+        """Fills a tree with the four groups. Returns how many rows it wrote."""
+        t = TRANSLATIONS[self.current_lang]
+        tree.delete(*tree.get_children())
+        written = 0
+
+        for key, label in (("added", t["diff_added"]), ("removed", t["diff_removed"])):
+            rows = diff.get(key) or []
+            if not rows:
+                continue
+            node = tree.insert("", "end", text=label.format(count=len(rows)), open=True)
+            for row in rows:
+                tree.insert(node, "end", text=self._diff_row_text(row), values=("", ""))
+                written += 1
+
+        changed = diff.get("changed") or []
+        if changed:
+            node = tree.insert("", "end", text=t["diff_changed"].format(count=len(changed)),
+                               open=True)
+            # Grouped per item: one move writes ParentId and Position, and reading those as two
+            # unrelated lines makes a single action look like two.
+            per_item: dict[str, list[dict]] = {}
+            for row in changed:
+                per_item.setdefault(str(row.get("id")), []).append(row)
+            for item_id, rows in per_item.items():
+                item_node = tree.insert(node, "end", text=self._diff_row_text(rows[0]),
+                                        open=True)
+                for row in rows:
+                    tree.insert(item_node, "end", text=str(row.get("field")), values=(
+                        self._diff_value_text(row.get("before")),
+                        self._diff_value_text(row.get("after")),
+                    ))
+                    written += 1
+
+        fields = diff.get("fields") or []
+        if fields:
+            node = tree.insert("", "end", text=t["diff_fields"].format(count=len(fields)),
+                               open=len(fields) <= DIFF_OPEN_ROWS)
+            # Grouped by the section the path starts in. A trader stock refresh alone rewrites
+            # some 1400 leaves, and a flat list of those buries the two the user made.
+            per_section: dict[str, list[dict]] = {}
+            for row in fields:
+                per_section.setdefault(str(row.get("path") or "").split(".")[0].split("[")[0],
+                                       []).append(row)
+            for section, rows in sorted(per_section.items()):
+                section_node = tree.insert(
+                    node, "end", text=f"{section}  ({len(rows)})",
+                    open=len(rows) <= DIFF_OPEN_ROWS)
+                for row in rows[:DIFF_SECTION_LIMIT]:
+                    tree.insert(section_node, "end", text=str(row.get("path")), values=(
+                        self._diff_value_text(row.get("before")),
+                        self._diff_value_text(row.get("after")),
+                    ))
+                    written += 1
+                if len(rows) > DIFF_SECTION_LIMIT:
+                    tree.insert(section_node, "end", values=("", ""), text=t["diff_more"].format(
+                        count=len(rows) - DIFF_SECTION_LIMIT))
+        return written
+
+    def _show_diff_dialog(self, title: str, diff: dict, confirm_label: str | None = None,
+                          intro: str | None = None) -> bool:
+        """Shows a change list. With `confirm_label` it asks, and returns True when confirmed.
+
+        Without it the dialog is a read-only comparison and the return value is False, which
+        no caller reads.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=intro or t["diff_intro"], wraplength=640,
+                  justify="left").pack(anchor="w", pady=(0, 8))
+
+        wrap = ttk.Frame(body)
+        wrap.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(wrap, orient="vertical")
+        scroll.pack(side="right", fill="y")
+        tree = ttk.Treeview(wrap, columns=("before", "after"), show="tree headings",
+                            height=16, selectmode="browse", yscrollcommand=scroll.set)
+        scroll.configure(command=tree.yview)
+        tree.pack(side="left", fill="both", expand=True)
+        tree.heading("#0", text=t["diff_col_what"])
+        tree.heading("before", text=t["diff_col_before"])
+        tree.heading("after", text=t["diff_col_after"])
+        tree.column("#0", width=420, anchor="w", stretch=True)
+        tree.column("before", width=160, anchor="w")
+        tree.column("after", width=160, anchor="w")
+
+        self._fill_diff_tree(tree, diff)
+        if diff_is_empty(diff):
+            tree.insert("", "end", text=t["diff_nothing"], values=("", ""))
+
+        answer: list[bool] = [False]
+
+        def accept() -> None:
+            answer[0] = True
+            win.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e", pady=(12, 0))
+        if confirm_label:
+            ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(
+                side="right", padx=(8, 0))
+            ttk.Button(buttons, text=confirm_label, command=accept).pack(side="right")
+        else:
+            ttk.Button(buttons, text=t["btn_close"], command=win.destroy).pack(side="right")
+
+        self._center_toplevel(win)
+        win.grab_set()
+        win.wait_window()
+        return answer[0]
+
     # --- Restoring a backup -------------------------------------------------------------
 
     def _open_restore_backup_dialog(self) -> None:
@@ -6141,6 +8278,28 @@ class SaveEditorGUI:
         ttk.Label(body, text=t["restore_hint"], wraplength=470, style="Hint.TLabel",
                   justify="left").pack(anchor="w", pady=(10, 0))
 
+        def diff_for(chosen: Path) -> dict | None:
+            """What restoring this backup would change in the save that is on disk now."""
+            current = self._read_save_file(Path(self.manager.save_path))
+            backup = self._read_save_file(chosen)
+            if current is None or backup is None:
+                return None
+            return diff_saves(current, backup)
+
+        def compare() -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            chosen = rows[selection[0]]
+            diff = diff_for(chosen)
+            if diff is None:
+                messagebox.showerror(t["restore_title"], t["diff_unreadable_compare"],
+                                     parent=win)
+                return
+            self._show_diff_dialog(
+                t["diff_compare_title"], diff,
+                intro=t["diff_compare_intro"].format(name=chosen.name))
+
         def confirm() -> None:
             selection = tree.selection()
             if not selection:
@@ -6149,10 +8308,17 @@ class SaveEditorGUI:
             if self.has_pending_changes and not messagebox.askyesno(
                     t["restore_title"], t["restore_pending"], parent=win):
                 return
-            if not messagebox.askyesno(
-                    t["restore_title"],
-                    t["restore_confirm"].format(name=chosen.name),
-                    parent=win):
+            # The same list the apply shows, in the other direction: what putting this file
+            # back would undo. A file name and a timestamp say nothing about that.
+            diff = diff_for(chosen)
+            if diff is None:
+                if not messagebox.askyesno(
+                        t["restore_title"],
+                        t["restore_confirm"].format(name=chosen.name), parent=win):
+                    return
+            elif not self._show_diff_dialog(
+                    t["diff_restore_title"], diff, confirm_label=t["btn_restore"],
+                    intro=t["diff_restore_intro"].format(name=chosen.name)):
                 return
             win.destroy()
             self._restore_backup(chosen)
@@ -6161,6 +8327,8 @@ class SaveEditorGUI:
         buttons.pack(anchor="e", pady=(14, 0))
         ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(side="right")
         ttk.Button(buttons, text=t["btn_restore"], command=confirm).pack(side="right", padx=(0, 6))
+        ttk.Button(buttons, text=t["diff_btn_compare"], command=compare).pack(
+            side="right", padx=(0, 6))
 
         tree.bind("<Double-1>", lambda _e: confirm())
         win.bind("<Escape>", lambda _e: win.destroy())
@@ -6193,6 +8361,7 @@ class SaveEditorGUI:
         self._refresh_mailbox()
         self._refresh_char_tab()
         self._refresh_quests_tree()
+        self._refresh_crafting_tree()
         # Offer edits from before the restore describe a file that is no longer on disk.
         self.shop_offer_undo = {}
         self._clear_pending_changes(t["status_restored"].format(
@@ -6237,94 +8406,58 @@ class SaveEditorGUI:
         self._populate_scope_view(reopen_member_ids=reopen)
         self._mark_pending_changes(f"Deleted {deleted} item(s) (not saved yet)")
 
-    def _search_items(self) -> None:
-        query = self.search_var.get().strip().lower()
-        t = TRANSLATIONS[self.current_lang]
-        if not query:
-            messagebox.showwarning(t["title"], t["msg_search_empty"])
-            return
+    def _search_query(self) -> str:
+        return self.search_var.get().strip().lower()
 
-        all_items = self.manager.get_all_items_flat()
-        filtered = [
-            item
-            for item in all_items
-            if query in str(item.get("Id", "")).lower()
-            or query in str(item.get("TemplateId", "")).lower()
-        ]
+    def _apply_search(self) -> None:
+        """Rebuild the inventory tree through the current filter.
 
-        popup = tk.Toplevel(self.root)
-        popup.title(t["search_results_title"].format(count=len(filtered)))
-        popup.geometry("900x420")
-        popup.transient(self.root)
+        The same shape the catalog search has: the tree itself is filtered, an empty box
+        shows everything again, and there is nothing to close. The popup this replaced
+        matched ids only, so a search for a name the rows themselves display found nothing.
+        """
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
 
-        ttk.Label(popup, text=t["search_found_count"].format(count=len(filtered))).pack(anchor="w", padx=8, pady=(8, 4))
+    def _search_haystack(self, item_id: str) -> str:
+        """Everything about one item worth searching: its name, both ids, its categories.
 
-        wrap = ttk.Frame(popup)
-        wrap.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-        result_tree = ttk.Treeview(
-            wrap,
-            columns=("item_id", "template_id", "name", "condition"),
-            show="headings",
+        Deliberately the same set of fields the catalog filter reads, plus the item id,
+        which only a save has.
+        """
+        item = self.manager.get_item(item_id) or {}
+        template_id = str(item.get("TemplateId") or "")
+        meta = self.game_item_meta_by_template_id.get(template_id.lower(), {})
+        parts = (
+            self._template_name_for_template_id(template_id) or "",
+            template_id,
+            str(item.get("Id") or ""),
+            str(meta.get("name") or ""),
+            str(meta.get("alias") or ""),
+            str(meta.get("category_label") or ""),
+            str(meta.get("subcategory_label") or ""),
         )
-        result_tree.heading("item_id", text=t["col_id"])
-        result_tree.heading("template_id", text="TemplateId")
-        result_tree.heading("name", text=t["col_cat_name"])
-        result_tree.heading("condition", text=t["col_condition"])
-        result_tree.column("item_id", width=380, anchor="w")
-        result_tree.column("template_id", width=250, anchor="w")
-        result_tree.column("name", width=170, anchor="w")
-        result_tree.column("condition", width=140, anchor="w")
-        result_tree.pack(side="left", fill="both", expand=True)
+        return " ".join(parts).lower()
 
-        scroll = ttk.Scrollbar(wrap, orient="vertical", command=result_tree.yview)
-        scroll.pack(side="right", fill="y")
-        result_tree.configure(yscrollcommand=scroll.set)
+    def _item_matches_search(self, item_id: str, query: str) -> bool:
+        # The empty-query guard cannot be reached through any caller - every one of them is
+        # already inside an `if query` - so no test can see it fail. It stays because
+        # "everything matches nothing" is the wrong answer to give a future caller.
+        return bool(query) and query in self._search_haystack(item_id)
 
-        for item in filtered:
-            template_id = str(item.get("TemplateId", ""))
-            result_tree.insert(
-                "",
-                "end",
-                values=(
-                    str(item.get("Id", "")),
-                    template_id,
-                    self._template_name_for_template_id(template_id) or "",
-                    self._condition_text_for_members([str(item.get("Id", ""))]) or "",
-                ),
+    def _subtree_matches_search(self, item_id: str, query: str) -> bool:
+        """The item itself or anything attached to it.
+
+        A scope sits inside a weapon inside a case, so a filter that only looked at the
+        rows currently on screen would answer "no matches" for an item three levels down.
+        """
+        cached = self._search_match_cache.get(item_id)
+        if cached is None:
+            cached = any(
+                self._item_matches_search(member, query)
+                for member in self.manager.collect_subtree(item_id)
             )
-
-        buttons = ttk.Frame(popup)
-        buttons.pack(fill="x", padx=8, pady=(0, 8))
-
-        def selected_popup_item_id() -> str | None:
-            selected = result_tree.selection()
-            if not selected:
-                messagebox.showwarning(t["msg_no_selection_title"], t["msg_select_search_result"], parent=popup)
-                return None
-            values = result_tree.item(selected[0], "values")
-            return str(values[0]) if values else None
-
-        def popup_repair() -> None:
-            item_id = selected_popup_item_id()
-            if not item_id:
-                return
-            self._repair_item_id(item_id)
-
-        def popup_duplicate() -> None:
-            item_id = selected_popup_item_id()
-            if not item_id:
-                return
-            copy_count = self._prompt_duplicate_count(is_stack=False, stack_size=1)
-            if copy_count is None:
-                return
-            self._duplicate_members([item_id], copy_count)
-
-        result_tree.bind("<Double-1>", lambda _evt: popup_repair())
-
-        ttk.Button(buttons, text=t["ctx_repair"], command=popup_repair).pack(side="left")
-        ttk.Button(buttons, text=t["ctx_duplicate"], command=popup_duplicate).pack(side="left", padx=(6, 0))
-        ttk.Button(buttons, text=t["btn_close"], command=popup.destroy).pack(side="right")
+            self._search_match_cache[item_id] = cached
+        return cached
 
     def _refresh_mailbox(self) -> None:
         for iid in self.mail_tree.get_children(""):
@@ -6424,6 +8557,18 @@ class SaveEditorGUI:
         if not self.has_pending_changes:
             return
         t = TRANSLATIONS[self.current_lang]
+
+        # Say what is about to be written before writing it. The diff is against the file on
+        # disk, so it also catches anything the game itself changed since the editor read it.
+        diff = self._diff_against_disk()
+        if diff is None:
+            if not messagebox.askyesno(t["title"], t["diff_unreadable"], parent=self.root):
+                return
+        elif not self._show_diff_dialog(
+                t["diff_apply_title"], diff, confirm_label=t["btn_apply"],
+                intro=t["diff_apply_intro"]):
+            return
+
         try:
             backup_path = self.manager.save(backup_name="manual_apply")
         except Exception as exc:
@@ -6471,6 +8616,7 @@ class SaveEditorGUI:
             self._populate_scope_view()
         self._refresh_mailbox()
         self._refresh_char_tab()
+        self._refresh_crafting_tree()
         # Trader offer edits that were never applied are gone with the reload, so only the
         # records for edits that did reach disk are still worth anything.
         self.shop_offer_undo = {

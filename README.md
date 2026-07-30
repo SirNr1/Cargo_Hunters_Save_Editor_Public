@@ -27,13 +27,21 @@ If you find this tool helpful and want to support its continued development:
 
 ![Quests](docs/screenshots/07-quests.png)
 
+| Crafting | Search |
+| --- | --- |
+| ![Crafting](docs/screenshots/09-crafting.png) | ![Search](docs/screenshots/12-search.png) |
+
 | Mailbox | Counters |
 | --- | --- |
 | ![Mailbox](docs/screenshots/04-mailbox.png) | ![Counters](docs/screenshots/06-counters.png) |
 
-| Item info | Offer at Trader |
+| Item info | Attachments |
 | --- | --- |
-| ![Item info](docs/screenshots/08-item-info.png) | ![Offer at Trader](docs/screenshots/05-offer-at-trader.png) |
+| ![Item info](docs/screenshots/08-item-info.png) | ![Attachments](docs/screenshots/10-attachments.png) |
+
+| The change list before writing | Offer at Trader |
+| --- | --- |
+| ![Change list](docs/screenshots/11-change-list.png) | ![Offer at Trader](docs/screenshots/05-offer-at-trader.png) |
 
 ---
 
@@ -46,6 +54,8 @@ If you find this tool helpful and want to support its continued development:
   * **Repair Item to...** sets a value of your choosing instead of the maximum, and holds each item to **its own** ceiling — 250 is right for a shield and nonsense for a five-charge repair kit, so one value across a whole weapon does not overshoot on the small parts.
   * **Move Item...** takes an item to another container. Attachments come along, and an equipped item leaves its slot empty.
   * **Split Stack...** takes part of a stack into a second one, defaulting to half. At least one unit stays behind, since taking all of them is a move rather than a split.
+  * **Attachments...** fits parts into an item and takes them off again. One window shows the slots on this item with whatever sits in each, and — for a part — the items of yours it fits into, so a scope can go straight from one rifle onto the next. A free slot offers exactly the parts the game allows there, out of what you own. Weapons, weapon parts, body parts and helmets all have slots.
+  * **Search** filters the tree by name, category or id. A hit inside a container brings the container along and opens it, so a sight sitting in a weapon in a rifle case is visible where it is. An empty box shows everything again.
   * Delete an item together with everything attached to it — or expand it and delete a single attachment, so a scope goes without touching the rifle.
 * **🔍 Item Info**:
   * Right-click → **Item Info**, in the inventory and in the catalog both. Read-only.
@@ -60,17 +70,21 @@ If you find this tool helpful and want to support its continued development:
 
     Your Recycler's level is read from your save. If every recipe needs a better module than you have, it says so rather than marking a row you cannot use. 426 of 1595 items can be recycled at all; the rest say plainly that they cannot.
   * **What the item is used for** — the recipes it is an ingredient in, with how many units each wants. Worth a look before scrapping something.
+  * **Which ammunition a gun takes**, and the other way round: open a cartridge and it names the weapons chambered for it. 36 weapons and 95 cartridges across 14 calibers, and every weapon has a match.
+  * **Where a part goes**, as a tree: a muzzle device fits the barrel, the barrel fits the receiver, the receiver fits the gun. Open the part instead and it names the **guns** it ends up on rather than the receiver in between. Body parts and helmets too — an arm shows its hydraulics and structure, a visor names its helmet.
 * **📍 Choose Where a New Item Goes**:
   * Duplicating and spawning both ask first, and list every container that has room: `Tab 1 - 73 of 240 cells free`, `Hugger (carried) - 22 of 24`.
   * A free spot is then searched for inside that container, turning the item 90° only if it fits no other way. Spawning ten looks for ten spots, and says so if only part of the batch fits.
   * **Inbox** is always offered, also when everything is full — the game hands the item to you as mail.
   * The **shelter** is not offered: the game files do not describe its grid, so the editor does not guess at its size.
+  * **Weapons need room, and they need their parts.** A weapon blocks more space than it is drawn at — a pistol shown as 2x1 can hold four cells — so the editor keeps that room clear around any weapon already in the container instead of dropping something into space the game considers taken. It also gives a weapon spawned on its own the parts it cannot exist without, like a slide or a receiver. Without either, the game hands the weapon straight back as mail.
 * **📦 Full Game Items Catalog**:
   * Browse the complete extracted item database by category.
   * Add catalog items directly into your inventory.
   * Stackable items are spawned as real stacks; the **Stack** column shows how many units fit in one.
   * Items that can wear out get one more field when spawned: the condition they start at. Left at the maximum they are spawned pristine, which is how the game stores an untouched item — it carries no condition field at all.
   * **Value** and **Weight** columns, straight from the game data. 1110 of 1595 items have a price and 1162 a weight; the rest show a dash rather than a zero, because "no price recorded" and "costs nothing" are different statements.
+  * **Spawn a weapon fully assembled**, the way the game ships it: right-click → **Spawn assembled...** and pick a configuration. 53 of them, covering 35 weapons with one to seven parts each, taken from the game's own preset list — the loot tables that leave anything to chance are left out rather than rolled for you. 17 configurations add up to more than their weapon is allowed to grow to, and the editor says so before spawning instead of letting the game answer with mail.
 * **🤝 Trader Stock Swapping**:
   * Temporarily place any catalog item into a trader's shop stock for purchase in-game.
   * Reverts when the trader's stock refreshes in-game, or immediately via the dialog's **Undo** button (current editor session only).
@@ -80,6 +94,10 @@ If you find this tool helpful and want to support its continued development:
   * Every quest in the game against the ones your save has met — **302 against 179** in a real save, which is the point: a save only ever names the quests you have already come across, so the ones you have not can only come from the game's own files.
   * Grouped the way the developers group them, and inside that by active, completed, or never seen. The never-seen branches start open, so the question is answered when you open the tab. Pick one and the panel below shows the full briefing, what it wants finished first, who sends it, and what it pays.
   * Two caveats: **67 of the unseen ones are daily quests** from a rotating pool and 21 are marked obsolete — cut content that cannot appear. And **progress is not shown**, because it is not in the save: the game stores what a quest wants but not how far along you are.
+* **🔧 Crafting (read-only)**:
+  * Every workbench recipe in the game — 150 of them across seven shelter modules — with what it takes, what it makes, and how long it runs.
+  * Your own store is counted against each one, so a recipe reads **ready**, **ingredients short**, **level too low**, or **not in the game yet**. The last one is real: some recipes ask for a workbench level the game has no build step for.
+  * The Recycler's own 976 recipes are not repeated here; they are in **Item Info**, per item, where the question is what you get for something.
 * **☢️ Hackerman's Lab**:
   * Edit nickname, character level, XP, individual skill levels, trader shop levels, and balance.
   * Every ceiling is read from the game's own data instead of a hardcoded number: each skill has its **own** maximum (the `MAX` button uses it), the character level stops where the game stops, and a trader's balance stops at what that shop is allowed to hold — writing more than the game accepts just gets cut down silently on the next load.
@@ -89,6 +107,7 @@ If you find this tool helpful and want to support its continued development:
   * One-click convenience boosts.
 * **🛡️ Safe Staging & Auto-Backup**:
   * Edits are staged in memory.
+  * **Apply Changes shows the list first and waits for a yes.** Every added item, every removed one, every changed field, grouped and named — and because it compares against the file on disk rather than against what the editor read at startup, it also catches what the game changed in the meantime. Cancel and nothing is written. The same list appears **before a restore**, saying what putting that backup back would undo, and on demand as a **comparison between your save and any backup**.
   * **Apply Changes** saves to disk while creating a timestamped backup in the `backups/` directory.
   * **Discard Changes** reverts pending edits to the last saved state.
   * **Keep backups** in the bottom right caps how many are kept — 20 by default, 0 keeps every one. Only files the editor named itself are ever deleted, so your own copies in that folder are safe.

@@ -250,6 +250,37 @@ def _extract_max_size(entry: dict[str, Any]) -> tuple[int | None, int | None, bo
     return None, None, False
 
 
+def _extract_resize(entry: dict[str, Any]) -> dict[str, int] | None:
+    """How much this part enlarges the item it is fitted to, or None when it does not.
+
+    **This is the field that explains a grown weapon**, and it took a mailbox to find: a
+    `Resize` component, on its own, carried by 132 templates. A Gaston 17 suppressor says
+    `{"Width": 1}` and makes its host one cell wider; a drum magazine says `{"Height": 1}`.
+    The six values in the bundle are (1,0), (2,0), (3,0), (0,1), (0,2) and one (6,2).
+
+    Read for the same reason `MaxSize` is: to know how much room to keep free for an item that
+    will grow. It is **not** the whole answer - summing it over every fitted part predicts the
+    stored size of 139 of a real save's 162 grown items exactly and overshoots the rest, so it
+    is an upper bound on the growth rather than the growth itself. Missing means no growth,
+    which is the serializer's usual omission.
+    """
+    for component in entry.get("_components") or []:
+        if not isinstance(component, dict):
+            continue
+        data = component.get("_data")
+        if not isinstance(data, dict):
+            continue
+        resize = data.get("Resize")
+        if not isinstance(resize, dict):
+            continue
+        width, height = resize.get("Width"), resize.get("Height")
+        return {
+            "width": width if isinstance(width, int) else 0,
+            "height": height if isinstance(height, int) else 0,
+        }
+    return None
+
+
 def _extract_container(entry: dict[str, Any]) -> dict[str, Any] | None:
     """The storage an item provides, or None if it holds nothing.
 
@@ -468,6 +499,222 @@ def _extract_mass(entry: dict[str, Any]) -> float | None:
 
     walk(entry)
     return found
+
+
+def _clean_category_label(label: str) -> str:
+    """A category label with runtime placeholders removed.
+
+    One of the 89 labels is a template the game fills in per item: `Sight x{magnification}`,
+    since each optic has its own. We cannot know the value, so the placeholder goes - and with
+    it the multiplier letter left dangling in front of it, which would otherwise read
+    "Sight x". A trailing one-character token after a removed placeholder is always that kind
+    of leftover.
+    """
+    cleaned = _LOCALIZED_PLACEHOLDER.sub("", str(label or "")).strip()
+    parts = cleaned.split()
+    # A lone letter or punctuation mark at the end is leftover; a lone digit is not, so
+    # something like "Tier 2" keeps its 2.
+    while parts and len(parts[-1]) == 1 and not parts[-1].isdigit():
+        parts.pop()
+    return " ".join(parts).strip(" :-–—,;.")
+
+
+def _extract_caliber(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Which cartridge a weapon fires, or which one a round is - as `{"type", "role"}`.
+
+    The same `CaliberType` field appears on two different components and means the same thing
+    from opposite ends, so the role is decided by what travels with it: firing behaviour
+    (`FireModes`, `ShotDuration`) makes it a weapon, ballistics (`DamageData`,
+    `MuzzleVelocity`) make it a cartridge. Told apart by fields rather than by the numeric
+    `$t`, which a game update renumbers.
+
+    Measured across the bundle: 36 weapons and 95 cartridges over 15 calibers, and **no weapon
+    is left without a matching cartridge** - which is what makes the pairing worth showing.
+    """
+    for component in entry.get("_components") or []:
+        data = component.get("_data") if isinstance(component, dict) else None
+        if not isinstance(data, dict) or "CaliberType" not in data:
+            continue
+        caliber = data.get("CaliberType")
+        if not isinstance(caliber, int) or isinstance(caliber, bool):
+            continue
+        if "FireModes" in data or "ShotDuration" in data:
+            return {"type": caliber, "role": "weapon"}
+        if "DamageData" in data or "MuzzleVelocity" in data:
+            return {"type": caliber, "role": "cartridge"}
+    return None
+
+
+def _filter_template_ids(node: Any, depth: int = 0) -> tuple[set[str], set[int], set[int]]:
+    """Every template a slot filter permits, plus the subcategory ids and tag ids it names.
+
+    Returns `(template_ids, subcategory_ids, tag_ids)`. The tags come back as numbers rather
+    than a flag because the items carry their own `Tags`, so membership answers the filter
+    without needing a table of tag names - see `_resolve_slot_filters`.
+
+    **`_filterPolicy` is deliberately ignored.** It looks like an allow/deny switch and is not:
+    the barrel slot of an `ETA 5 receiver` carries policy 0 with a one-element list holding
+    exactly its own `DefaultItemTemplateId`, and a deny-list forbidding the only part meant to
+    go there is nonsense. Across the bundle the slot's own default sits *inside* its own list
+    in 147 of 149 cases regardless of policy. So both values carry permitted templates, and
+    what the flag really distinguishes - most likely how a composite filter combines its
+    children - is unresolved and not needed to answer "what fits here".
+
+    """
+    templates: set[str] = set()
+    subcategories: set[int] = set()
+    tags: set[int] = set()
+    if not isinstance(node, dict) or depth > 6:
+        return templates, subcategories, tags
+
+    for value in node.get("_templateIds") or []:
+        if isinstance(value, str) and value.strip():
+            templates.add(normalize_guid(value))
+    for value in node.get("_itemSubCategoryIds") or []:
+        if isinstance(value, int) and not isinstance(value, bool):
+            subcategories.add(value)
+    for value in node.get("_tagList") or []:
+        if isinstance(value, int) and not isinstance(value, bool):
+            tags.add(value)
+
+    for child in node.get("_filtersList") or []:
+        sub_t, sub_s, sub_tags = _filter_template_ids(child, depth + 1)
+        templates |= sub_t
+        subcategories |= sub_s
+        tags |= sub_tags
+    return templates, subcategories, tags
+
+
+def _extract_tags(entry: dict[str, Any]) -> list[int] | None:
+    """The item's own tag numbers, carried by 1427 of the 1595 templates.
+
+    These are what makes a tag-filtered attachment slot answerable. The bundle ships no table
+    of tag *names* - checked, no asset has "tag" in its name - but names are not needed:
+    a slot filtering on tag 36 wants the items whose own `Tags` contain 36. Membership is the
+    whole question, so `_resolve_slot_filters` builds the index and expands the slots.
+    """
+    for component in entry.get("_components") or []:
+        data = component.get("_data") if isinstance(component, dict) else None
+        if isinstance(data, dict) and isinstance(data.get("Tags"), list):
+            tags = [v for v in data["Tags"] if isinstance(v, int) and not isinstance(v, bool)]
+            return tags or None
+    return None
+
+
+def _resolve_slot_filters(template_meta: dict[str, dict[str, Any]]) -> dict[str, int]:
+    """Turns tag and subcategory filters into concrete template lists, in place.
+
+    A second pass, because a slot can only be answered once every template's own tags and
+    subcategory are known. Both kinds of filter turn out to describe **small** sets - the three
+    tags slots use hold 11, 4 and 9 items, all of them sights, and the two subcategories hold 4
+    and 6 - so expanding them beats showing "any Sight" and leaving the reader to go looking.
+
+    Returns counts for the report, and leaves `allows_tags` / `allows_subcategories` in place so
+    a later reader can see where an entry came from.
+    """
+    by_tag: dict[int, list[str]] = defaultdict(list)
+    by_subcategory: dict[int, list[str]] = defaultdict(list)
+    for template_id, meta in template_meta.items():
+        for tag in meta.get("tags") or []:
+            by_tag[tag].append(template_id)
+        subcategory = meta.get("subcategory_id")
+        if isinstance(subcategory, int):
+            by_subcategory[subcategory].append(template_id)
+
+    stats = Counter()
+    for meta in template_meta.values():
+        for slot in meta.get("mod_slots") or []:
+            gained: set[str] = set()
+            for tag in slot.get("allows_tags") or []:
+                gained |= set(by_tag.get(tag, ()))
+            for subcategory in slot.get("allows_subcategories") or []:
+                gained |= set(by_subcategory.get(subcategory, ()))
+            if not gained:
+                continue
+            before = set(slot.get("allows") or [])
+            slot["allows"] = sorted(before | gained)
+            stats["slots_expanded"] += 1
+            stats["templates_added"] += len(gained - before)
+    stats["tags_indexed"] = len(by_tag)
+    return dict(stats)
+
+
+_EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _extract_mod_slots(
+    entry: dict[str, Any],
+    items_table: dict[int, str] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Every slot an item offers, and what each one accepts.
+
+    **Two different components mean the same thing**, and both are read here so the GUI has one
+    field to work with:
+
+    - `ModificationSlots` - weapons and weapon parts, 109 templates. These hang off
+      *components* rather than the weapon: a muzzle device fits the barrel, the barrel fits the
+      receiver, the receiver fits the weapon, so one gun is a tree.
+    - `ContainerSlots` - body parts, helmets and a few internals, 27 templates. An
+      `L.Arm Nobunaga` has two, filtered to "Modified hydraulics" and "Modified Structure",
+      which is the game's way of saying hydraulics and a structure go in an arm. A `GP` helmet
+      has one, filtered to its own `GP Visor`.
+
+    `ContainerSlots` entries carry a **`LocalizedName` of their own**, which beats any label
+    derived from their contents, so it is resolved here when the items table is available.
+    """
+    slots: list[dict[str, Any]] = []
+
+    def add(raw: dict[str, Any], source: str) -> None:
+        templates, subcategories, tags = _filter_template_ids(raw.get("ItemsFilter") or {})
+        # The all-zero GUID is the data's "nothing" placeholder - two helmet slots use it - and
+        # naming it as a permitted part would put an unresolvable row in the UI.
+        templates = {t for t in templates if t != _EMPTY_GUID}
+
+        # **A container slot is only an attachment point if it says what fits.** Reading
+        # `ContainerSlots` wholesale also picks up ordinary compartments: 24 slots on Valuable
+        # deposits and 43 on internal objects carry no filter at all, and showing those would
+        # promise an attachment point where the game just has a pocket. Body parts filter on
+        # every one of their 25 slots, helmets on 6 of 9 - so the filter is the discriminator,
+        # not the category. Weapon slots are kept regardless; all 195 of them filter anyway.
+        if source == "container" and not (templates or subcategories or tags):
+            return
+        default = raw.get("DefaultItemTemplateId")
+        name = None
+        reference = raw.get("LocalizedName")
+        if isinstance(reference, dict) and isinstance(items_table, dict):
+            entry_id = reference.get("TableEntryReference")
+            if isinstance(entry_id, int):
+                raw_name = items_table.get(entry_id)
+                if isinstance(raw_name, str) and raw_name.strip():
+                    name = _clean_category_label(raw_name)
+        slots.append({
+            "type": raw.get("Type") if isinstance(raw.get("Type"), int) else None,
+            "required": bool(raw.get("IsRequiredToEquip")),
+            "default_template_id": (
+                normalize_guid(default)
+                if isinstance(default, str) and default.strip()
+                and normalize_guid(default) != _EMPTY_GUID
+                else None
+            ),
+            "allows": sorted(templates),
+            # Kept alongside the expanded `allows` so a reader can see where an entry came
+            # from. `_resolve_slot_filters` folds both into `allows` in a second pass.
+            "allows_subcategories": sorted(subcategories),
+            "allows_tags": sorted(tags),
+            "name": name,
+            "source": source,
+        })
+
+    for component in entry.get("_components") or []:
+        data = component.get("_data") if isinstance(component, dict) else None
+        if not isinstance(data, dict):
+            continue
+        for field, source in (("ModificationSlots", "weapon"), ("ContainerSlots", "container")):
+            if isinstance(data.get(field), list):
+                for raw in data[field]:
+                    if isinstance(raw, dict):
+                        add(raw, source)
+    return slots or None
 
 
 _LOCALIZED_MARKUP = re.compile(r"<[^>]*>")
@@ -923,6 +1170,221 @@ def _extract_craft_meta(repo_env: Any) -> dict[str, Any]:
     }
 
 
+def _extract_presets_meta(
+    repo_env: Any, template_meta: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The game's own factory configurations: a finished item with the parts already fitted.
+
+    `item_presets` ships 1049 entries and most of them are **loot tables**, not configurations:
+    971 carry dice of some kind - a `Chance` below 1, a `MinCount`/`MaxCount` range, a `Weight`
+    for a random draw, a nested `ItemsPresetId`, a durability range. Those answer "what might
+    spawn in this crate", which is a different question from "give me this gun the way the game
+    builds it", so they are left out rather than resolved by rolling for the user.
+
+    Two further filters, both narrow and both measured:
+
+    - an alias beginning with DELETE is the developers' own marker (`DELETE_ASAP_Oscar590A1_
+      Modified_GripX_Supressor`); there are two.
+    - the root template must **have attachment points**. That rule drops six of the remaining
+      59: five scenery placeholders whose contents are grid items in a container the player
+      never carries (a Toolbox holding junk, two invisible lockers, a PC with wires) and
+      `Quest_DeadMonster_01_Loot`, a monster's head with nothing to fit into it.
+
+    What remains is 53 presets, every one a firearm, covering 35 distinct weapons with one to
+    seven parts each: `Oscar590A1_Default` is the shotgun with its magazine, barrel, grip and
+    receiver, and `DVS_MK2` the same gun with an extended magazine and the X parts.
+
+    Parts are stored **flat with a parent index** rather than nested, because that is the shape
+    the spawner walks: create the root, then each part into the host it belongs to. `parent` is
+    an index into the same list, or -1 for a part sitting directly on the root.
+    """
+    presets = _read_repo_text_asset(repo_env, "item_presets")
+    if not isinstance(presets, list):
+        return []
+
+    dice_keys = ("RandomPresets", "MinCount", "MaxCount", "Weight", "ItemsPresetId",
+                 "MinDurability", "MaxDurability", "Modificators")
+
+    def deterministic(node: Any) -> bool:
+        """True when nothing anywhere in the entry leaves the outcome to chance."""
+        if isinstance(node, dict):
+            if node.get("Chance") not in (None, 1.0):
+                return False
+            if any(node.get(key) not in (None, [], {}) for key in dice_keys):
+                return False
+            return all(deterministic(value) for value in node.values())
+        if isinstance(node, list):
+            return all(deterministic(value) for value in node)
+        return True
+
+    def template_of(node: Any) -> str:
+        """A preset entry names its template directly, or through `Container` when it is one."""
+        if not isinstance(node, dict):
+            return ""
+        container = node.get("Container") if isinstance(node.get("Container"), dict) else {}
+        raw = container.get("ItemItemplateId") or node.get("ItemItemplateId")
+        return normalize_guid(str(raw)) if isinstance(raw, str) and raw.strip() else ""
+
+    def collect(node: Any, parent: int, parts: list[dict[str, Any]]) -> None:
+        content = node.get("Content") if isinstance(node.get("Content"), dict) else {}
+        for wrapper in content.get("Items") or []:
+            if not isinstance(wrapper, dict):
+                continue
+            item = wrapper.get("Item")
+            template_id = template_of(item)
+            if not template_id:
+                continue
+            parts.append({"template_id": template_id, "parent": parent})
+            collect(item, len(parts) - 1, parts)
+
+    out: list[dict[str, Any]] = []
+    for preset in presets:
+        if not isinstance(preset, dict):
+            continue
+        alias = str(preset.get("Alias") or "").strip()
+        if alias.upper().startswith("DELETE") or not deterministic(preset):
+            continue
+        spawn = preset.get("ItemsAtSpawnPoint")
+        # One entry means one item. Two would be a spawn point holding several things, which is
+        # a scene rather than a configuration.
+        if not isinstance(spawn, list) or len(spawn) != 1:
+            continue
+        root = template_of(spawn[0])
+        if not root or not (template_meta.get(root) or {}).get("mod_slots"):
+            continue
+
+        parts: list[dict[str, Any]] = []
+        collect(spawn[0], -1, parts)
+        out.append({
+            "id": normalize_guid(str(preset.get("Id") or "")),
+            "alias": alias,
+            "root": root,
+            "parts": parts,
+        })
+
+    out.sort(key=lambda row: row["alias"].lower())
+    return out
+
+
+def _extract_shelter_crafting_meta(
+    repo_env: Any,
+    locale: str,
+    tables: dict[str, dict[int, str]],
+    key_maps: dict[str, dict[str, int]],
+) -> dict[str, Any]:
+    """What each shelter workbench can make, and how far it has to be built to make it.
+
+    The same `craft_recipes` list recycling comes from, read from the other end: a recipe names
+    its module in `MainBuiltLeveledShelterModule` and the level that module needs. Of the 1150
+    recipes, 976 are the Recycler's - already in `craft_meta.recycling`, and repeating them
+    here would cost about a megabyte for a second view of the same rows - and **150 survive on
+    the seven workbenches** once the scratch recipes are dropped: Body Crafter 46, Laboratory
+    46, Armor and textile 23, Ammo 10, 3D Printer 9, Items Crafter 9, Aid 7.
+
+    Each module also carries `max_level`, the number of build steps in
+    `BuildPerLevelRequirements`. That number is what makes an unreachable recipe visible:
+    `MinLevel` values of 9, 333 and 999 appear on recipes whose module stops at 2 or 3, so the
+    content exists in the data while the workbench to run it does not. Marking those beats
+    listing them as though they were craftable.
+    """
+    recipes = _read_repo_text_asset(repo_env, "craft_recipes")
+    foundations = _read_repo_text_asset(repo_env, "shelter_module_foundations")
+    if not isinstance(recipes, list) or not isinstance(foundations, list):
+        return {"modules": []}
+
+    recycler_id = _recycler_foundation_id(repo_env)
+
+    def resolve(reference: Any) -> str | None:
+        if not isinstance(reference, dict):
+            return None
+        table_base = reference.get("TableReference")
+        entry_id = reference.get("TableEntryReference")
+        if not isinstance(table_base, str) or not isinstance(entry_id, int):
+            return None
+        for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
+            raw = (tables.get(table_name) or {}).get(entry_id)
+            if isinstance(raw, str) and raw.strip():
+                return _clean_localized(raw, locale, tables, key_maps)
+        return None
+
+    modules: dict[str, dict[str, Any]] = {}
+    for entry in foundations:
+        if not isinstance(entry, dict):
+            continue
+        found_id = entry.get("Id")
+        if not isinstance(found_id, str) or not found_id.strip():
+            continue
+        key = normalize_guid(found_id)
+        if recycler_id is not None and key == recycler_id:
+            continue
+        levels = entry.get("BuildPerLevelRequirements")
+        modules[key] = {
+            "foundation_id": key,
+            # The alias is the developers' own English name and always present; the localized
+            # name is preferred where the Shelter table has one.
+            "alias": str(entry.get("Alias") or "").strip(),
+            "name": resolve(entry.get("LocalizedName")),
+            "max_level": len(levels) if isinstance(levels, list) else 0,
+            "recipes": [],
+        }
+
+    for recipe in recipes:
+        if not isinstance(recipe, dict):
+            continue
+        # Same scratch-recipe rule as `_extract_craft_meta`: `xyz*` are the developers' own
+        # placeholders, one of them asking for 604 rounds of 9x19 to make 9x19.
+        if str(recipe.get("EditorName") or "").lower().startswith("xyz"):
+            continue
+        module = (
+            recipe.get("MainBuiltLeveledShelterModule")
+            if isinstance(recipe.get("MainBuiltLeveledShelterModule"), dict)
+            else {}
+        )
+        foundation = normalize_guid(str(module.get("ShelterModuleFoundationId") or ""))
+        target = modules.get(foundation)
+        if target is None:
+            continue
+
+        def parts(entries: Any) -> list[dict[str, Any]]:
+            """One row per template with the counts summed - 20 recipes state a quantity by
+            repeating the entry instead of setting `Count`."""
+            merged: dict[str, int] = {}
+            for item in entries if isinstance(entries, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                template_id = item.get("ItemTemplateId")
+                if not isinstance(template_id, str) or not template_id.strip():
+                    continue
+                count = item.get("Count")
+                normalized = normalize_guid(template_id)
+                merged[normalized] = merged.get(normalized, 0) + (
+                    int(count) if isinstance(count, (int, float)) else 1
+                )
+            return [{"template_id": k, "count": v} for k, v in merged.items()]
+
+        inputs = parts(recipe.get("Inputs"))
+        outputs = parts(recipe.get("Outputs"))
+        if not inputs or not outputs:
+            continue
+
+        min_level = module.get("MinLevel")
+        duration = recipe.get("CraftDuration")
+        target["recipes"].append({
+            "name": str(recipe.get("EditorName") or "").strip(),
+            "min_level": int(min_level) if isinstance(min_level, int) else 1,
+            "duration_seconds": int(duration) if isinstance(duration, (int, float)) else None,
+            "inputs": inputs,
+            "outputs": outputs,
+        })
+
+    for module in modules.values():
+        module["recipes"].sort(key=lambda row: (row["min_level"], row["name"].lower()))
+    # A workbench with nothing on it says nothing; the shelter has 16 such foundations.
+    kept = [m for m in modules.values() if m["recipes"]]
+    kept.sort(key=lambda module: (module.get("name") or module["alias"]).lower())
+    return {"modules": kept}
+
+
 def _build_localization_items_table(localization_env: Any, locale: str) -> tuple[str | None, dict[int, str]]:
     return _build_localization_table(
         localization_env=localization_env,
@@ -1110,15 +1572,18 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                     label = item_categories_table.get(entry_id)
                     if not isinstance(label, str) or not label.strip():
                         continue
+                    label = _clean_category_label(label)
+                    if not label:
+                        continue
                     key = key.strip().upper()
                     if key.startswith("ITEM_CATEGORY_"):
                         suffix = key.removeprefix("ITEM_CATEGORY_")
                         if suffix.isdigit():
-                            category_label_by_id[int(suffix)] = label.strip()
+                            category_label_by_id[int(suffix)] = label
                     elif key.startswith("ITEM_SUBCATEGORY_"):
                         suffix = key.removeprefix("ITEM_SUBCATEGORY_")
                         if suffix.isdigit():
-                            subcategory_label_by_id[int(suffix)] = label.strip()
+                            subcategory_label_by_id[int(suffix)] = label
                 break
         except Exception:
             pass
@@ -1182,6 +1647,10 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
             "is_resizable": is_resizable,
             "price": _extract_price(entry),
             "mass": _extract_mass(entry),
+            "caliber": _extract_caliber(entry),
+            "resize": _extract_resize(entry),
+            "mod_slots": _extract_mod_slots(entry, items_table),
+            "tags": _extract_tags(entry),
         }
 
         resolved_name = None
@@ -1385,10 +1854,17 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         }
         break
 
+    # Second pass: a tag or subcategory filter can only be turned into parts once every
+    # template's own tags are known.
+    slot_filter_stats = _resolve_slot_filters(template_meta)
+
     all_tables = _build_all_localization_tables(localization_env)
     shared_key_maps = _build_shared_key_maps(shared_env) if shared_env is not None else {}
     quests_meta = _extract_quests_meta(repo_env, locale, all_tables, shared_key_maps)
     craft_meta = _extract_craft_meta(repo_env)
+    crafting_meta = _extract_shelter_crafting_meta(
+        repo_env, locale, all_tables, shared_key_maps)
+    presets_meta = _extract_presets_meta(repo_env, template_meta)
 
     return {
         "enabled": True,
@@ -1419,6 +1895,9 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         "quests_table": quests_table_name,
         "quests_meta": quests_meta,
         "craft_meta": craft_meta,
+        "crafting_meta": crafting_meta,
+        "presets_meta": presets_meta,
+        "slot_filter_stats": slot_filter_stats,
     }
 
 
@@ -1550,6 +2029,9 @@ def build_final_mapping(
             "stack_capacity": repo_meta.get(tid, {}).get("stack_capacity"),
             "price": repo_meta.get(tid, {}).get("price"),
             "mass": repo_meta.get(tid, {}).get("mass"),
+            "caliber": repo_meta.get(tid, {}).get("caliber"),
+            "mod_slots": repo_meta.get(tid, {}).get("mod_slots"),
+            "tags": repo_meta.get(tid, {}).get("tags"),
             # The storage this item provides, for placing something inside it. `width`/
             # `height` above are the item's own footprint and a different thing entirely.
             "container": repo_meta.get(tid, {}).get("container"),
@@ -1562,6 +2044,7 @@ def build_final_mapping(
             "max_width": repo_meta.get(tid, {}).get("max_width"),
             "max_height": repo_meta.get(tid, {}).get("max_height"),
             "is_resizable": repo_meta.get(tid, {}).get("is_resizable"),
+            "resize": repo_meta.get(tid, {}).get("resize"),
             "confidence": (
                 "high"
                 if name_guess and tid in repo_candidates
@@ -1601,8 +2084,12 @@ def build_item_catalog(mapping: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "stack_capacity": row.get("stack_capacity"),
                 "price": row.get("price"),
                 "mass": row.get("mass"),
+                "caliber": row.get("caliber"),
+                "mod_slots": row.get("mod_slots"),
+                "tags": row.get("tags"),
                 "container": row.get("container"),
                 "alias": row.get("alias"),
+                "resize": row.get("resize"),
                 "max_width": row.get("max_width"),
                 "max_height": row.get("max_height"),
                 "is_resizable": row.get("is_resizable"),
@@ -1684,12 +2171,20 @@ def run_extraction(
             "fallback_alias_count": repository_names.get("fallback_alias_count"),
             "quests_table": repository_names.get("quests_table"),
             "quests_count": len(repository_names.get("quests_meta") or {}),
+            "slot_filter_stats": repository_names.get("slot_filter_stats"),
             "recycler_foundation_id": (
                 repository_names.get("craft_meta") or {}).get("recycler_foundation_id"),
             "recyclable_count": len(
                 (repository_names.get("craft_meta") or {}).get("recycling") or {}),
             "used_in_count": len(
                 (repository_names.get("craft_meta") or {}).get("used_in") or {}),
+            "crafting_modules": len(
+                (repository_names.get("crafting_meta") or {}).get("modules") or []),
+            "crafting_recipes": sum(
+                len(module.get("recipes") or [])
+                for module in (
+                    (repository_names.get("crafting_meta") or {}).get("modules") or [])),
+            "presets_count": len(repository_names.get("presets_meta") or []),
         },
         "summary": {
             "template_ids_in_save": len(save_usage["template_usage_count"]),
@@ -1713,6 +2208,8 @@ def run_extraction(
         "level_progress": repository_names.get("level_progress", {}),
         "quests_meta": repository_names.get("quests_meta", {}),
         "craft_meta": repository_names.get("craft_meta", {}),
+        "crafting_meta": repository_names.get("crafting_meta", {}),
+        "presets_meta": repository_names.get("presets_meta", []),
         "bundle_slug_hints": bundle_hints["bundle_slug_hints"],
     }
 
