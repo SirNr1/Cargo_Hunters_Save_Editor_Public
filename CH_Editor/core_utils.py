@@ -41,6 +41,133 @@ _ORIGIN_LIST_PATH = {
 }
 
 
+# --- Comparing two saves -----------------------------------------------------------------
+# What the editor is about to write, said out loud. Two rules carry the whole thing:
+#
+#   - **Items are matched by their Id, never by position in a list.** They live in three
+#     parallel lists and a move across sections carries the dict from one into another, so an
+#     index-based comparison would report every move as a deletion plus an addition.
+#   - **Any other list of dicts that all carry an `Id` is matched by that `Id` too.** Deleting
+#     the first of 59 letters shifts the 58 behind it; by index that reads as 58 changes, and
+#     by Id it reads as the one deletion it is.
+#
+# Everything left over is compared leaf by leaf, so a change the categories have no name for
+# still shows up as its own path rather than being silently dropped. A confirmation dialog
+# that can quietly omit something is worse than none.
+
+_DIFF_ITEM_LISTS = tuple(_ORIGIN_LIST_PATH.values())
+
+
+def _leaf_paths(node: Any, path: str, out: Dict[str, Any], skip: Set[str]) -> None:
+    """Every scalar in the document, keyed by a readable path.
+
+    A list whose entries all carry an `Id` is keyed by that id (`Letters[abc]`), so inserting
+    or removing one entry does not shift everything behind it.
+    """
+    if path in skip:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _leaf_paths(value, f"{path}.{key}" if path else str(key), out, skip)
+        return
+    if isinstance(node, list):
+        entries = [entry for entry in node if isinstance(entry, dict)]
+        by_id = len(entries) == len(node) and node and all(
+            isinstance(entry.get("Id"), (str, int)) for entry in entries
+        )
+        for index, value in enumerate(node):
+            key = str(value.get("Id")) if by_id else str(index)
+            _leaf_paths(value, f"{path}[{key}]", out, skip)
+        if not node:
+            out[path] = "[]"
+        return
+    out[path] = node
+
+
+def _items_by_id(data: Dict[str, Any]) -> Dict[str, Tuple[str, dict]]:
+    """Every item in the save as `id -> (origin, item)`, across all three lists."""
+    found: Dict[str, Tuple[str, dict]] = {}
+    for origin, path in _ORIGIN_LIST_PATH.items():
+        node: Any = data
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        for entry in node if isinstance(node, list) else []:
+            if isinstance(entry, dict) and entry.get("Id") is not None:
+                found[str(entry["Id"])] = (origin, entry)
+    return found
+
+
+def _item_fields(item: dict) -> Dict[str, Any]:
+    """The parts of an item worth naming in a change list."""
+    inner = (item.get("AdditionalData") or {}).get("_data")
+    fields = {
+        "TemplateId": item.get("TemplateId"),
+        "ParentId": item.get("ParentId"),
+        "Position": json.dumps(item.get("Position"), sort_keys=True),
+    }
+    if isinstance(inner, dict):
+        for key, value in inner.items():
+            fields[key] = value
+    return fields
+
+
+def diff_saves(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
+    """What changed between two saves, in terms a person can check.
+
+    Returns four lists. `added` and `removed` are items, each with its template so the caller
+    can put a name to it; `changed` is one row per changed field of a surviving item, with the
+    origin list included because a move between sections is the one change that is invisible
+    in the item itself; `fields` is everything outside the item lists, by path.
+
+    Deliberately not a text diff of the JSON. The save is written with `indent=2` from a dict
+    whose key order follows insertion, so a textual comparison reports formatting as content.
+    """
+    old_items, new_items = _items_by_id(before), _items_by_id(after)
+
+    added = [
+        {"id": item_id, "template_id": str(item.get("TemplateId") or ""),
+         "parent_id": str(item.get("ParentId") or ""), "origin": origin}
+        for item_id, (origin, item) in new_items.items() if item_id not in old_items
+    ]
+    removed = [
+        {"id": item_id, "template_id": str(item.get("TemplateId") or ""),
+         "parent_id": str(item.get("ParentId") or ""), "origin": origin}
+        for item_id, (origin, item) in old_items.items() if item_id not in new_items
+    ]
+
+    changed: List[Dict[str, Any]] = []
+    for item_id, (new_origin, new_item) in new_items.items():
+        if item_id not in old_items:
+            continue
+        old_origin, old_item = old_items[item_id]
+        old_fields, new_fields = _item_fields(old_item), _item_fields(new_item)
+        template = str(new_item.get("TemplateId") or old_item.get("TemplateId") or "")
+        if old_origin != new_origin:
+            changed.append({"id": item_id, "template_id": template, "field": "origin",
+                            "before": old_origin, "after": new_origin})
+        for key in sorted(set(old_fields) | set(new_fields)):
+            if old_fields.get(key) != new_fields.get(key):
+                changed.append({"id": item_id, "template_id": template, "field": key,
+                                "before": old_fields.get(key), "after": new_fields.get(key)})
+
+    skip = {".".join(path) for path in _DIFF_ITEM_LISTS}
+    old_leaves: Dict[str, Any] = {}
+    new_leaves: Dict[str, Any] = {}
+    _leaf_paths(before, "", old_leaves, skip)
+    _leaf_paths(after, "", new_leaves, skip)
+    fields = [
+        {"path": path, "before": old_leaves.get(path), "after": new_leaves.get(path)}
+        for path in sorted(set(old_leaves) | set(new_leaves))
+        if old_leaves.get(path) != new_leaves.get(path)
+    ]
+
+    return {"added": added, "removed": removed, "changed": changed, "fields": fields}
+
+
+def diff_is_empty(diff: Dict[str, Any]) -> bool:
+    return not any(diff.get(key) for key in ("added", "removed", "changed", "fields"))
+
+
 def _backup_order(path: Path) -> Optional[Tuple[datetime, int]]:
     """Creation order taken from the file name, or None for a name this editor did not write.
 
@@ -599,7 +726,7 @@ class SaveDataManager:
 
         return doomed
 
-    # --- Moving and splitting -----------------------------------------------------
+    # --- Moving, attaching and splitting ------------------------------------------
 
     def move_item(
         self,
@@ -694,6 +821,71 @@ class SaveDataManager:
             ]
 
         return moving
+
+    def slot_occupant(self, host_id: str, slot_index: int) -> Optional[str]:
+        """Which item is fitted in one of a host's attachment slots, or None while it is free.
+
+        **A fitted part records its slot in `Position.I`.** Measured across a real save: all
+        196 parts hanging off an item with attachment points sit at an index whose slot
+        permits exactly that part, and no host carries two parts at the same index. A part
+        with no `Position` at all is in slot 0 - the same default-omission rule that makes a
+        missing `Index` an empty equipment slot.
+
+        The index counts through the host template's own slot list, which is why this stays
+        in the data layer while "does this part belong in that slot" is a question for the
+        game data upstairs.
+        """
+        wanted = int(slot_index)
+        for child_id in self.get_children(str(host_id)):
+            position = (self.item_tree.get(child_id) or {}).get("Position")
+            index = int(position.get("I") or 0) if isinstance(position, dict) else 0
+            if index == wanted:
+                return child_id
+        return None
+
+    def attach_item(self, item_id: str, host_id: str, slot_index: int) -> List[str]:
+        """Fits an item into one of a host's attachment slots.
+
+        Returns the ids that moved, the item first, or an empty list when refused. Attaching
+        is a move plus one number: everything `move_item` carries - the subtree, the origin
+        list, the equipment slot the item may be leaving - applies unchanged, and the slot is
+        written as `Position.I`.
+
+        Slot 0 is written by **removing** the key rather than storing a zero, because that is
+        what the game itself writes: 108 of a real save's 196 fitted parts carry no `Position`
+        at all. `BaseComponent_rotated` goes for a related reason - a slot has one orientation,
+        so a part that was lying sideways in a grid must not claim to be sideways in a scope
+        mount.
+
+        Refused on top of everything `move_item` refuses when the slot is already taken by a
+        different item. Whether the slot *permits* this part is decided by the caller from the
+        game data; the save alone cannot answer it.
+        """
+        root, host = str(item_id), str(host_id)
+        if isinstance(slot_index, bool) or not isinstance(slot_index, int) or slot_index < 0:
+            return []
+        if root not in self.item_tree or host not in self.item_tree:
+            return []
+        if self.is_structural(host):
+            return []
+
+        occupant = self.slot_occupant(host, slot_index)
+        if occupant is not None and occupant != root:
+            return []
+
+        moved = self.move_item(root, host)
+        if not moved:
+            return []
+
+        item = self.item_tree[root]
+        if slot_index:
+            item["Position"] = {"I": slot_index}
+        else:
+            item.pop("Position", None)
+        inner = (item.get("AdditionalData") or {}).get("_data")
+        if isinstance(inner, dict):
+            inner.pop("BaseComponent_rotated", None)
+        return moved
 
     def split_stack(
         self,

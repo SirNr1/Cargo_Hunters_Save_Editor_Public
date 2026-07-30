@@ -873,29 +873,29 @@ category_id,category_label,subcategory_id,subcategory_label,name,template_id,wid
 20,"Weapon Mod",7,"Magazine","VMAG10",31f9f8af-4e16-45e8-84de-08606ef2474e,1,1,6800,0.3,Items_en.m_TableData,high
 20,"Weapon Mod",7,"Magazine","VMAG20",d241e2bc-15b1-499a-a33c-563e6e0a2e66,1,2,11000,0.5,Items_en.m_TableData,high
 20,"Weapon Mod",7,"Magazine","VMAG30",4606342c-b96a-4019-9379-364841fa7cf7,1,2,25000,1.0,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","1A4M Sight",b250a7e6-5aa6-4659-9882-da69d43f2720,1,1,1600,0.15,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","AGOTH",ef356100-8e19-42ac-ad45-1a6629592ffa,2,1,6850,0.4,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Beastmaster",0a92e93b-a479-40c5-9156-181eb04096a4,2,1,7000,0.6,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Borovik",d41a5b80-05d8-434d-9652-4021ffa2769d,2,1,2700,0.4,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","DORA sight",23abd278-c171-48d2-b116-2ac1441099a3,1,1,2420,0.24,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","ETA 417 sight",707604a7-9235-49eb-9a89-9925c29e67b8,1,1,4960,0.172,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","FIREX-PRO",a5535eb8-ba62-4724-9903-4845bb0b4afd,2,1,34850,1.0,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","FOXTROT-U",ae596355-675d-4799-ac00-8f52a81977c3,2,1,23000,0.6,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Herstal SH sight",d1d82534-0f7e-456b-98dc-01cd38e651be,1,1,3040,0.075,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","Humboldt Y4 OS",c95fbaf6-2f51-4c50-9a01-fc7297b2894d,2,1,12606,2.0,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Jaegeraugen",0c5125aa-4d25-4512-bb5b-03167c123e22,2,1,5000,0.6,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","LEP-7",5b6f373c-f022-4ebc-9e0b-2c8d82c41798,2,1,5100,0.5,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","LES",e57105aa-ffdc-426e-a261-f208ad5f06c7,2,1,2920,0.4,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Maximillian V OS",1660acbb-3a12-40e6-a9a1-9db844d8a735,2,1,8000,0.8,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","OKO-77",930bbdd3-a95b-40a6-a741-dbd894206ac1,2,1,16000,1.1,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","PES OS",ef803849-7fbd-41ed-8b3d-297ce6fb1e35,2,1,4520,0.6,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","PRIMAL",c9e8789e-e7a7-4d7b-940b-bd8754670c68,1,1,4140,0.4,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","PRO90 Sight",93686991-de7f-4aad-bcfe-1eebe51381af,1,1,2420,0.2,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","PRZL-5",22e83fd7-f87d-4d80-be6e-f85056341e94,2,1,3800,0.5,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","QUAKE",c9435509-b4e1-482a-a54b-c50752ae9268,2,1,5350,0.3,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Ramon OS",e32e244a-b266-4837-83f2-e74936372a8a,2,1,5570,0.6,item_templates.alias_fallback_for_localization_links,high
-20,"Weapon Mod",8,"Sight x{magnification}","Woodmann",a8e9e196-51e8-4e40-8c11-a43b5c2fdbe0,2,1,4500,0.5,Items_en.m_TableData,high
-20,"Weapon Mod",8,"Sight x{magnification}","Zveroboi",24ea38dd-e313-4303-a077-331d80de2694,2,1,5000,0.7,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","1A4M Sight",b250a7e6-5aa6-4659-9882-da69d43f2720,1,1,1600,0.15,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","AGOTH",ef356100-8e19-42ac-ad45-1a6629592ffa,2,1,6850,0.4,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Beastmaster",0a92e93b-a479-40c5-9156-181eb04096a4,2,1,7000,0.6,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Borovik",d41a5b80-05d8-434d-9652-4021ffa2769d,2,1,2700,0.4,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","DORA sight",23abd278-c171-48d2-b116-2ac1441099a3,1,1,2420,0.24,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","ETA 417 sight",707604a7-9235-49eb-9a89-9925c29e67b8,1,1,4960,0.172,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","FIREX-PRO",a5535eb8-ba62-4724-9903-4845bb0b4afd,2,1,34850,1.0,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","FOXTROT-U",ae596355-675d-4799-ac00-8f52a81977c3,2,1,23000,0.6,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Herstal SH sight",d1d82534-0f7e-456b-98dc-01cd38e651be,1,1,3040,0.075,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","Humboldt Y4 OS",c95fbaf6-2f51-4c50-9a01-fc7297b2894d,2,1,12606,2.0,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Jaegeraugen",0c5125aa-4d25-4512-bb5b-03167c123e22,2,1,5000,0.6,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","LEP-7",5b6f373c-f022-4ebc-9e0b-2c8d82c41798,2,1,5100,0.5,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","LES",e57105aa-ffdc-426e-a261-f208ad5f06c7,2,1,2920,0.4,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Maximillian V OS",1660acbb-3a12-40e6-a9a1-9db844d8a735,2,1,8000,0.8,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","OKO-77",930bbdd3-a95b-40a6-a741-dbd894206ac1,2,1,16000,1.1,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","PES OS",ef803849-7fbd-41ed-8b3d-297ce6fb1e35,2,1,4520,0.6,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","PRIMAL",c9e8789e-e7a7-4d7b-940b-bd8754670c68,1,1,4140,0.4,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","PRO90 Sight",93686991-de7f-4aad-bcfe-1eebe51381af,1,1,2420,0.2,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","PRZL-5",22e83fd7-f87d-4d80-be6e-f85056341e94,2,1,3800,0.5,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","QUAKE",c9435509-b4e1-482a-a54b-c50752ae9268,2,1,5350,0.3,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Ramon OS",e32e244a-b266-4837-83f2-e74936372a8a,2,1,5570,0.6,item_templates.alias_fallback_for_localization_links,high
+20,"Weapon Mod",8,"Sight","Woodmann",a8e9e196-51e8-4e40-8c11-a43b5c2fdbe0,2,1,4500,0.5,Items_en.m_TableData,high
+20,"Weapon Mod",8,"Sight","Zveroboi",24ea38dd-e313-4303-a077-331d80de2694,2,1,5000,0.7,Items_en.m_TableData,high
 20,"Weapon Mod",9,"Muzzle",".300 WinMag supressor",6fade111-f653-462f-9961-adc92ae52b7d,2,1,50000,0.212,item_templates.alias_fallback_for_localization_links,high
 20,"Weapon Mod",9,"Muzzle","1A4M Trustshot suppressor",b4966a1d-a693-4c8f-b696-c58e7f5c6927,2,1,10000,0.19,item_templates.alias_fallback_for_localization_links,high
 20,"Weapon Mod",9,"Muzzle","AssaultRifle_06_Suppressor_01",19194808-14ca-4a19-b824-e57a18d7358c,2,1,16000,0.4,item_templates.alias_fallback_for_localization_links,high
@@ -1593,4 +1593,6 @@ category_id,category_label,subcategory_id,subcategory_label,name,template_id,wid
 37,"",100,"Blueprint","Item blueprint",dbdb1174-3605-474e-82c2-385c18cb2ae7,1,1,3000,0.1,Items_en.m_TableData,high
 37,"",100,"Blueprint","Item blueprint",dd93c2d9-b9c0-4714-b0c2-329b0e2e745e,1,1,1000,0.1,Items_en.m_TableData,high
 37,"",100,"Blueprint","Item blueprint",f5a0bb7d-e999-4a41-baf5-f0eed1ba4880,1,1,1000,0.1,Items_en.m_TableData,high
+,"",,"","",101db923-b828-417d-9103-c0ea7ac65713,,,,,,medium
+,"",,"","",179d4947-5320-4d86-9f4d-f5706c4745fb,,,,,,medium
 ,"",,"",".45 ACP Tutorial ammo",a9c96f62-09d1-4429-96d6-8667009bb757,1,1,,100.0,item_templates.alias_fallback_for_localization_links,high
