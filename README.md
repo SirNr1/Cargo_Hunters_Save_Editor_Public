@@ -31,6 +31,10 @@ If you find this tool helpful and want to support its continued development:
 | --- | --- |
 | ![Crafting](docs/screenshots/09-crafting.png) | ![Search](docs/screenshots/12-search.png) |
 
+| A grouped row, opened | Factory fresh |
+| --- | --- |
+| ![Stacks](docs/screenshots/13-stacks.png) | ![Factory fresh](docs/screenshots/14-factory-fresh.png) |
+
 | Mailbox | Counters |
 | --- | --- |
 | ![Mailbox](docs/screenshots/04-mailbox.png) | ![Counters](docs/screenshots/06-counters.png) |
@@ -52,6 +56,9 @@ If you find this tool helpful and want to support its continued development:
   * Stack-aware duplication (+ copy count).
   * Recursive item repair (weapons, durability, condition metrics).
   * **Repair Item to...** sets a value of your choosing instead of the maximum, and holds each item to **its own** ceiling — 250 is right for a shield and nonsense for a five-charge repair kit, so one value across a whole weapon does not overshoot on the small parts.
+  * **Factory fresh**, a tick in that same window and a one-click button for the whole save. It does the opposite of setting a number: it **removes** the wear record — the condition, the condition the item arrived with, and the charges. That is what the game means by mint, and a repair to the maximum is not it: the game shows an untouched DORA with no condition data at all, while a rifle repaired to full sits at the maximum and still reads as repaired. An item that is already fresh says so instead of doing nothing.
+  * **Set Stack Size...** writes how many units a stack holds, up to what that item can carry. No free cell needed, unlike duplicating, and a value outside the range is refused rather than quietly cut down. Items the game never stacked stay unstacked.
+  * **A grouped row opens.** `12x70 AP (10 stacks, 200 units)` is ten separate items, and each one is now a row of its own underneath — so anything you do there applies to that one stack instead of asking you to pick a number from a list you cannot see.
   * **Move Item...** takes an item to another container. Attachments come along, and an equipped item leaves its slot empty.
   * **Split Stack...** takes part of a stack into a second one, defaulting to half. At least one unit stays behind, since taking all of them is a move rather than a split.
   * **Attachments...** fits parts into an item and takes them off again. One window shows the slots on this item with whatever sits in each, and — for a part — the items of yours it fits into, so a scope can go straight from one rifle onto the next. A free slot offers exactly the parts the game allows there, out of what you own. Weapons, weapon parts, body parts and helmets all have slots.
@@ -94,17 +101,19 @@ If you find this tool helpful and want to support its continued development:
   * Every quest in the game against the ones your save has met — **302 against 179** in a real save, which is the point: a save only ever names the quests you have already come across, so the ones you have not can only come from the game's own files.
   * Grouped the way the developers group them, and inside that by active, completed, or never seen. The never-seen branches start open, so the question is answered when you open the tab. Pick one and the panel below shows the full briefing, what it wants finished first, who sends it, and what it pays.
   * Two caveats: **67 of the unseen ones are daily quests** from a rotating pool and 21 are marked obsolete — cut content that cannot appear. And **progress is not shown**, because it is not in the save: the game stores what a quest wants but not how far along you are.
+  * **Search** across the name, the briefing text, the sender, the group and the id — half a remembered line from a letter is enough to find the quest it came from.
 * **🔧 Crafting (read-only)**:
   * Every workbench recipe in the game — 150 of them across seven shelter modules — with what it takes, what it makes, and how long it runs.
   * Your own store is counted against each one, so a recipe reads **ready**, **ingredients short**, **level too low**, or **not in the game yet**. The last one is real: some recipes ask for a workbench level the game has no build step for.
   * The Recycler's own 976 recipes are not repeated here; they are in **Item Info**, per item, where the question is what you get for something.
+  * **Search** matches the module, the recipe name, what it makes — and what it consumes, so typing an ingredient answers the other question: not how to make a thing, but what the pile of scrap in your bag is good for.
 * **☢️ Hackerman's Lab**:
   * Edit nickname, character level, XP, individual skill levels, trader shop levels, and balance.
   * Every ceiling is read from the game's own data instead of a hardcoded number: each skill has its **own** maximum (the `MAX` button uses it), the character level stops where the game stops, and a trader's balance stops at what that shop is allowed to hold — writing more than the game accepts just gets cut down silently on the next load.
   * XP is capped at the current level's goal, which is shown next to the field. Set the level first; changing it resets XP to 0.
   * **Unspent skill points** can be added, and are deliberately not capped.
   * A **Counters** sub-tab shows the account's sessions, last run and lifetime tallies, read-only.
-  * One-click convenience boosts.
+  * Five one-click buttons: **Max Out All Skills**, **Fill Trader Balances**, **Repair All Items**, **Fill All Stacks** — every partial stack up to what its item can carry — and **Make Everything Factory Fresh**, which strips the wear record off the whole save. The last two ask first and say afterwards how much they touched; like every other edit, nothing is written until you apply.
 * **🛡️ Safe Staging & Auto-Backup**:
   * Edits are staged in memory.
   * **Apply Changes shows the list first and waits for a yes.** Every added item, every removed one, every changed field, grouped and named — and because it compares against the file on disk rather than against what the editor read at startup, it also catches what the game changed in the meantime. Cancel and nothing is written. The same list appears **before a restore**, saying what putting that backup back would undo, and on demand as a **comparison between your save and any backup**.

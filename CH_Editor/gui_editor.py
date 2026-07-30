@@ -318,6 +318,8 @@ TRANSLATIONS = {
         "tab_quests": "Quests",
         "tab_crafting": "Crafting",
         "craft_count": "{modules} workbenches, {recipes} recipes, {ready} ready to craft",
+        "quest_counts_filtered": "{count} of {total} quests match '{query}'",
+        "craft_count_filtered": "{recipes} recipes match '{query}', {ready} of them ready",
         "craft_no_data": "No crafting data. Use Refresh Names from Game to read it.",
         "craft_module_row": "{name}  -  built {level} of {max}  ({count} recipes)",
         "craft_level_row": "Needs level {level}  ({count})",
@@ -405,6 +407,13 @@ TRANSLATIONS = {
         "custom_title_repair": "Repair to a value",
         "custom_repair_prompt": "{name} carries {field}. Set it to:",
         "custom_repair_children": "Apply to attached items too",
+        "mint_checkbox": "Make it factory fresh instead",
+        "mint_hint": "Factory fresh strips the wear record instead of setting a number: the game only calls an item mint while it carries no condition data at all, and a repair to maximum still reads as repaired.",
+        "status_mint": "{count} item(s) are factory fresh now (not saved yet)",
+        "status_mint_nothing": "Nothing to do - this carries no wear at all, which is exactly what factory fresh means.",
+        "btn_cheat_mint": "\u2728 Make Everything Factory Fresh",
+        "msg_mint_all_confirm": "Make all {count} items in the save factory fresh?\n\nEvery condition and durability record is removed, which is how the game stores an item that has never been used.",
+        "msg_cheats_mint": "Done. {count} item(s) carry no wear any more.",
         "custom_repair_none": "This item carries no condition data, and neither does anything attached to it. The game only stores those fields once an item stops being pristine, so there is nothing to set.",
         "custom_repair_field_cond": "condition (0 to {max})",
         "custom_repair_field_dur": "charges (0 to {max})",
@@ -428,6 +437,16 @@ TRANSLATIONS = {
         "move_failed": "The item could not be moved.",
         "status_moved": "Moved {count} item(s) to {target} (not saved yet)",
         "ctx_split": "Split Stack...",
+        "ctx_stack_size": "Set Stack Size...",
+        "stack_title": "Stack size",
+        "stack_not_stackable": "This item is not a stack, so it has no size to set.",
+        "stack_prompt": "How many units should this stack hold? It holds {current} of at most {max}.",
+        "stack_prompt_nomax": "How many units should this stack hold? It holds {current}; the game data names no maximum for it.",
+        "status_stack_set": "{name} now holds {count} units (not saved yet)",
+        "btn_cheat_stacks": "\U0001f4e6 Fill All Stacks",
+        "msg_cheats_stacks": "Filled {count} stack(s), {units} units added.",
+        "msg_cheats_stacks_none": "Every stack is already full.",
+        "status_cheat_stacks": "Filled {count} stacks, {units} units added (not saved yet)",
         "split_title": "Split stack",
         "split_prompt": "Take how many of the {quantity} units:",
         "split_hint": "The units taken become a second stack; the rest stays where it is. "
@@ -738,6 +757,8 @@ TRANSLATIONS = {
         "tab_quests": "Quests",
         "tab_crafting": "Herstellung",
         "craft_count": "{modules} Werkbänke, {recipes} Rezepte, {ready} sofort herstellbar",
+        "quest_counts_filtered": "{count} von {total} Quests passen zu '{query}'",
+        "craft_count_filtered": "{recipes} Rezepte passen zu '{query}', {ready} davon machbar",
         "craft_no_data": "Keine Herstellungsdaten. Bitte Namen aus dem Spiel aktualisieren.",
         "craft_module_row": "{name}  —  Stufe {level} von {max}  ({count} Rezepte)",
         "craft_level_row": "Braucht Stufe {level}  ({count})",
@@ -827,6 +848,13 @@ TRANSLATIONS = {
         "custom_title_repair": "Auf einen Wert setzen",
         "custom_repair_prompt": "{name} trägt {field}. Setzen auf:",
         "custom_repair_children": "Auch auf Anbauteile anwenden",
+        "mint_checkbox": "Stattdessen auf fabrikneu setzen",
+        "mint_hint": "Fabrikneu entfernt den Verschleiß-Eintrag, statt eine Zahl zu setzen: Das Spiel nennt einen Gegenstand nur mint, solange er gar keine Zustandsdaten trägt - eine Reparatur auf Maximum bleibt eine Reparatur.",
+        "status_mint": "{count} Gegenstände sind jetzt fabrikneu (noch nicht gespeichert)",
+        "status_mint_nothing": "Nichts zu tun - hier steht überhaupt kein Verschleiß drin, und genau das heißt fabrikneu.",
+        "btn_cheat_mint": "\u2728 Alles auf fabrikneu",
+        "msg_mint_all_confirm": "Alle {count} Gegenstände im Spielstand auf fabrikneu setzen?\n\nJeder Zustands- und Haltbarkeitseintrag wird entfernt - so speichert das Spiel einen nie benutzten Gegenstand.",
+        "msg_cheats_mint": "Fertig. {count} Gegenstände tragen keinen Verschleiß mehr.",
         "custom_repair_none": "Dieser Gegenstand trägt keine Zustandsdaten, und seine Anbauteile auch nicht. Das Spiel legt diese Felder erst an, wenn ein Gegenstand nicht mehr makellos ist — es gibt hier also nichts zu setzen.",
         "custom_repair_field_cond": "Zustand (0 bis {max})",
         "custom_repair_field_dur": "Ladungen (0 bis {max})",
@@ -852,6 +880,16 @@ TRANSLATIONS = {
         "move_failed": "Der Gegenstand konnte nicht verschoben werden.",
         "status_moved": "{count} Gegenstand/Gegenstände nach {target} verschoben (noch nicht gespeichert)",
         "ctx_split": "Stapel teilen...",
+        "ctx_stack_size": "Stapelgröße setzen...",
+        "stack_title": "Stapelgröße",
+        "stack_not_stackable": "Dieser Gegenstand ist kein Stapel, es gibt also keine Größe zu setzen.",
+        "stack_prompt": "Wie viele Einheiten soll der Stapel enthalten? Aktuell {current} von höchstens {max}.",
+        "stack_prompt_nomax": "Wie viele Einheiten soll der Stapel enthalten? Aktuell {current}; die Spieldaten nennen kein Maximum dafür.",
+        "status_stack_set": "{name} enthält jetzt {count} Einheiten (noch nicht gespeichert)",
+        "btn_cheat_stacks": "\U0001f4e6 Alle Stapel auffüllen",
+        "msg_cheats_stacks": "{count} Stapel aufgefüllt, {units} Einheiten dazugekommen.",
+        "msg_cheats_stacks_none": "Alle Stapel sind bereits voll.",
+        "status_cheat_stacks": "{count} Stapel aufgefüllt, {units} Einheiten dazugekommen (noch nicht gespeichert)",
         "split_title": "Stapel teilen",
         "split_prompt": "Wie viele der {quantity} Stück abtrennen:",
         "split_hint": "Die abgetrennten Stück werden ein zweiter Stapel, der Rest bleibt "
@@ -1170,6 +1208,8 @@ TRANSLATIONS = {
         "tab_quests": "Квесты",
         "tab_crafting": "Крафт",
         "craft_count": "Верстаков: {modules}, рецептов: {recipes}, готово к крафту: {ready}",
+        "quest_counts_filtered": "\u041f\u043e '{query}': {count} \u0438\u0437 {total} \u043a\u0432\u0435\u0441\u0442\u043e\u0432",
+        "craft_count_filtered": "\u041f\u043e '{query}': {recipes} \u0440\u0435\u0446\u0435\u043f\u0442\u043e\u0432, \u0433\u043e\u0442\u043e\u0432\u043e {ready}",
         "craft_no_data": "Нет данных о крафте. Обновите названия из игры.",
         "craft_module_row": "{name}  —  построено {level} из {max}  (рецептов: {count})",
         "craft_level_row": "Нужен уровень {level}  ({count})",
@@ -1257,6 +1297,13 @@ TRANSLATIONS = {
         "custom_title_repair": "Задать значение",
         "custom_repair_prompt": "{name} имеет {field}. Задать:",
         "custom_repair_children": "Применить и к присоединённым предметам",
+        "mint_checkbox": "\u0412\u043c\u0435\u0441\u0442\u043e \u044d\u0442\u043e\u0433\u043e \u0441\u0434\u0435\u043b\u0430\u0442\u044c \u043d\u043e\u0432\u044b\u043c",
+        "mint_hint": "\u041d\u043e\u0432\u044b\u0439 \u0432\u0438\u0434 \u0443\u0431\u0438\u0440\u0430\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u044c \u043e\u0431 \u0438\u0437\u043d\u043e\u0441\u0435, \u0430 \u043d\u0435 \u0441\u0442\u0430\u0432\u0438\u0442 \u0447\u0438\u0441\u043b\u043e: \u0438\u0433\u0440\u0430 \u0441\u0447\u0438\u0442\u0430\u0435\u0442 \u0432\u0435\u0449\u044c \u043d\u043e\u0432\u043e\u0439, \u043f\u043e\u043a\u0430 \u0443 \u043d\u0435\u0451 \u0432\u043e\u043e\u0431\u0449\u0435 \u043d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u043e \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0438.",
+        "status_mint": "\u041d\u043e\u0432\u044b\u043c\u0438 \u0441\u0442\u0430\u043b\u0438: {count} (\u0435\u0449\u0451 \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e)",
+        "status_mint_nothing": "\u041d\u0435\u0447\u0435\u0433\u043e \u0434\u0435\u043b\u0430\u0442\u044c - \u0438\u0437\u043d\u043e\u0441\u0430 \u043d\u0435\u0442 \u0432\u043e\u0432\u0441\u0435, \u044d\u0442\u043e \u0438 \u0435\u0441\u0442\u044c \u043d\u043e\u0432\u043e\u0435 \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435.",
+        "btn_cheat_mint": "\u2728 \u0412\u0441\u0451 \u043a\u0430\u043a \u043d\u043e\u0432\u043e\u0435",
+        "msg_mint_all_confirm": "\u0421\u0434\u0435\u043b\u0430\u0442\u044c \u0432\u0441\u0435 {count} \u043f\u0440\u0435\u0434\u043c\u0435\u0442\u043e\u0432 \u043d\u043e\u0432\u044b\u043c\u0438?\n\n\u0412\u0441\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u043e \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0438 \u0438 \u043f\u0440\u043e\u0447\u043d\u043e\u0441\u0442\u0438 \u0443\u0434\u0430\u043b\u044f\u044e\u0442\u0441\u044f.",
+        "msg_cheats_mint": "\u0413\u043e\u0442\u043e\u0432\u043e. \u0411\u0435\u0437 \u0438\u0437\u043d\u043e\u0441\u0430: {count}.",
         "custom_repair_none": "У этого предмета нет данных о состоянии, как и у его навесок. Игра создаёт эти поля, лишь когда предмет перестаёт быть идеальным.",
         "custom_repair_field_cond": "состояние (от 0 до {max})",
         "custom_repair_field_dur": "заряды (от 0 до {max})",
@@ -1280,6 +1327,16 @@ TRANSLATIONS = {
         "move_failed": "Не удалось переместить предмет.",
         "status_moved": "Перемещено предметов: {count} → {target} (ещё не сохранено)",
         "ctx_split": "Разделить стак...",
+        "ctx_stack_size": "\u0417\u0430\u0434\u0430\u0442\u044c \u0440\u0430\u0437\u043c\u0435\u0440 \u0441\u0442\u0430\u043a\u0430...",
+        "stack_title": "\u0420\u0430\u0437\u043c\u0435\u0440 \u0441\u0442\u0430\u043a\u0430",
+        "stack_not_stackable": "\u042d\u0442\u043e \u043d\u0435 \u0441\u0442\u0430\u043a, \u0440\u0430\u0437\u043c\u0435\u0440 \u0437\u0430\u0434\u0430\u0432\u0430\u0442\u044c \u043d\u0435\u0447\u0435\u043c\u0443.",
+        "stack_prompt": "\u0421\u043a\u043e\u043b\u044c\u043a\u043e \u0435\u0434\u0438\u043d\u0438\u0446 \u0432 \u0441\u0442\u0430\u043a\u0435? \u0421\u0435\u0439\u0447\u0430\u0441 {current} \u0438\u0437 {max}.",
+        "stack_prompt_nomax": "\u0421\u043a\u043e\u043b\u044c\u043a\u043e \u0435\u0434\u0438\u043d\u0438\u0446 \u0432 \u0441\u0442\u0430\u043a\u0435? \u0421\u0435\u0439\u0447\u0430\u0441 {current}; \u043c\u0430\u043a\u0441\u0438\u043c\u0443\u043c \u0432 \u0434\u0430\u043d\u043d\u044b\u0445 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d.",
+        "status_stack_set": "\u0412 {name} \u0442\u0435\u043f\u0435\u0440\u044c {count} \u0435\u0434\u0438\u043d\u0438\u0446 (\u0435\u0449\u0451 \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e)",
+        "btn_cheat_stacks": "\U0001f4e6 \u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u0432\u0441\u0435 \u0441\u0442\u0430\u043a\u0438",
+        "msg_cheats_stacks": "\u0417\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u0441\u0442\u0430\u043a\u043e\u0432: {count}, \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e {units}.",
+        "msg_cheats_stacks_none": "\u0412\u0441\u0435 \u0441\u0442\u0430\u043a\u0438 \u0443\u0436\u0435 \u043f\u043e\u043b\u043d\u044b\u0435.",
+        "status_cheat_stacks": "\u0417\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u043e {count}, \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u043e {units} (\u0435\u0449\u0451 \u043d\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e)",
         "split_title": "Разделение стака",
         "split_prompt": "Сколько штук отделить из {quantity}:",
         "split_hint": "Отделённые штуки станут вторым стаком, остальное останется на месте. "
@@ -1837,10 +1894,11 @@ class SaveEditorGUI:
         self.context_menu.add_command(command=self._duplicate_selected_custom)
         self.context_menu.add_command(command=self._move_selected)
         self.context_menu.add_command(command=self._split_selected)
+        self.context_menu.add_command(command=self._set_stack_size_selected)
         self.context_menu.add_command(command=self._open_attachments_dialog)
         self.context_menu.add_command(command=self._show_info_for_selected_item)
         # The separator keeps the one destructive entry away from the rest. It occupies
-        # index 8, so Delete is relabelled as index 9. Every label below is applied by
+        # index 9, so Delete is relabelled as index 10. Every label below is applied by
         # position, so inserting an entry above one of them moves a label onto the wrong
         # action - which is why the tests assert the order.
         self.context_menu.add_separator()
@@ -2161,10 +2219,11 @@ class SaveEditorGUI:
         self.context_menu.entryconfigure(3, label=t["ctx_duplicate_custom"])
         self.context_menu.entryconfigure(4, label=t["ctx_move"])
         self.context_menu.entryconfigure(5, label=t["ctx_split"])
-        self.context_menu.entryconfigure(6, label=t["ctx_attachments"])
-        self.context_menu.entryconfigure(7, label=t["ctx_info"])
-        # Index 8 is the separator.
-        self.context_menu.entryconfigure(9, label=t["ctx_delete"])
+        self.context_menu.entryconfigure(6, label=t["ctx_stack_size"])
+        self.context_menu.entryconfigure(7, label=t["ctx_attachments"])
+        self.context_menu.entryconfigure(8, label=t["ctx_info"])
+        # Index 9 is the separator.
+        self.context_menu.entryconfigure(10, label=t["ctx_delete"])
         
         # 4. Mailbox Tab
         self.mail_delete_btn.configure(text=t["btn_delete_mail"])
@@ -2183,6 +2242,10 @@ class SaveEditorGUI:
         self._refresh_subcategory_filter()
         self.cat_search_lbl.configure(text=t["lbl_search"])
         self.cat_search_btn.configure(text=t["btn_search"])
+        self.quest_search_lbl.configure(text=t["lbl_search"])
+        self.quest_search_btn.configure(text=t["btn_search"])
+        self.craft_search_lbl.configure(text=t["lbl_search"])
+        self.craft_search_btn.configure(text=t["btn_search"])
         self.catalog_menu.entryconfigure(0, label=t["ctx_add_to_inv"])
         self.catalog_menu.entryconfigure(1, label=t["ctx_spawn_preset"])
         self.catalog_menu.entryconfigure(2, label=t["ctx_offer_at_trader"])
@@ -2232,6 +2295,8 @@ class SaveEditorGUI:
         # Cheats Frame
         self.cheats_lf.configure(text=t["lf_cheats"])
         self.cheat_repair_all_btn.configure(text=t["btn_cheat_repair"])
+        self.cheat_mint_all_btn.configure(text=t["btn_cheat_mint"])
+        self.cheat_fill_stacks_btn.configure(text=t["btn_cheat_stacks"])
         self.cheat_max_skills_btn.configure(text=t["btn_cheat_max"])
         self.cheat_fill_trader_btn.configure(text=t["btn_cheat_fill"])
         
@@ -2350,7 +2415,9 @@ class SaveEditorGUI:
             ("★ INVENTORY EDITOR ★\n\n", "header"),
             ("• Expand Folders: ", "bullet"),
             ("Double-click", "highlight"),
-            (" on category/tab folders to expand their items.\n", "bullet"),
+            (" on category/tab folders to expand their items. A row like \"5 stacks, 95 "
+             "units\" opens the same way, one line per stack, and anything you do to one of "
+             "those lines applies to that stack alone.\n", "bullet"),
             ("• Search: ", "bullet"),
             ("Type a name, a category or an id and press Return. The tree keeps what matches, "
              "and a hit inside a container opens that container so you can see where it sits. "
@@ -2370,6 +2437,15 @@ class SaveEditorGUI:
             ("  - Split Stack...: ", "highlight"),
             ("Takes part of a stack into a second one. At least one unit stays behind, since "
              "taking all of them would be a move rather than a split.\n", "bullet"),
+            ("  - Set Stack Size...: ", "highlight"),
+            ("Writes how many units one stack holds, up to what the item can carry. No free "
+             "cell needed, unlike a duplicate. Items the game never stacked are turned down "
+             "rather than turned into stacks.\n", "bullet"),
+            ("  - Repair Item to... -> factory fresh: ", "highlight"),
+            ("The tick in that window does the opposite of setting a value: it removes the "
+             "condition, the record of what the item arrived with, and the charge count. That "
+             "is what the game calls mint - a repair to maximum still reads as repaired, "
+             "because the game keeps the record that the item was damaged.\n", "bullet"),
             ("  - Attachments...: ", "highlight"),
             ("Fits parts into the item and takes them off again. The window shows the slots "
              "on this item with whatever sits in each, and the items of yours that this one "
@@ -2448,7 +2524,20 @@ class SaveEditorGUI:
             ("Set Stats", "highlight"),
             (".\n", "bullet"),
             ("• Cheats: ", "bullet"),
-            ("Use one-click buttons to max out all skills, credit 1,000,000 to all traders, or fully repair all items in the save.\n\n\n", "bullet"),
+            ("Five one-click buttons. ", "bullet"),
+            ("Max Out All Skills", "highlight"),
+            (" and ", "bullet"),
+            ("Fill Trader Balances", "highlight"),
+            (" (1,000,000 each) do what they say. ", "bullet"),
+            ("Repair All Items", "highlight"),
+            (" takes everything to its maximum, while ", "bullet"),
+            ("Make Everything Factory Fresh", "highlight"),
+            (" removes the wear record instead, which is the stronger one: the save then "
+             "reads as never used. ", "bullet"),
+            ("Fill All Stacks", "highlight"),
+            (" tops every stack up to what its item can carry. The last two ask first and "
+             "say afterwards how much they touched; nothing is written until you "
+             "apply.\n\n\n", "bullet"),
             
             ("★ SAVING YOUR CHANGES ★\n\n", "header"),
             ("• Apply Edits: ", "bullet"),
@@ -2482,6 +2571,11 @@ class SaveEditorGUI:
              "into active, completed and never seen. The never-seen branches start open. "
              "Pick a quest for the full briefing, what it needs finished first, who sends it "
              "and what it pays.\n", "bullet"),
+            ("• Search: ", "bullet"),
+            ("The box above the tree matches the quest name, its briefing text, the sender, "
+             "the group and the internal id, so a half-remembered line from a letter is "
+             "enough to find it again. What is left standing is shown open. An empty box "
+             "brings the whole list back.\n", "bullet"),
             ("• Read-only: ", "bullet"),
             ("Nothing here is written back. The progress of a running quest is not in the "
              "save at all, only what the quest asks for - so it cannot be shown either.\n\n\n",
@@ -2494,6 +2588,10 @@ class SaveEditorGUI:
              "it runs, and whether you could start it now. Select one and the pane underneath "
              "lists each ingredient as have / needed, marking what you are short of.\n",
              "bullet"),
+            ("• Search: ", "bullet"),
+            ("The box above the tree matches the module, the recipe name and what it makes - "
+             "and also what it consumes, so typing an ingredient answers \"what can I even "
+             "do with this?\". Matches are shown open.\n", "bullet"),
             ("• Not in the game yet: ", "bullet"),
             ("Some recipes ask for a workbench level the game has no build step for - the 3D "
              "Printer stops at level 1 and carries recipes for 2 and 3. Those are marked "
@@ -2519,7 +2617,9 @@ class SaveEditorGUI:
             ("★ INVENTAR-EDITOR ★\n\n", "header"),
             ("• Ordner erweitern: ", "bullet"),
             ("Doppelklicke", "highlight"),
-            (" auf Kategorie- oder Reiter-Ordner, um deren Inhalt anzuzeigen.\n", "bullet"),
+            (" auf Kategorie- oder Reiter-Ordner, um deren Inhalt anzuzeigen. Eine Zeile wie "
+             "\"5 Stapel, 95 Einheiten\" klappt genauso auf, eine Zeile je Stapel, und was du "
+             "mit einer dieser Zeilen machst, betrifft nur diesen einen Stapel.\n", "bullet"),
             ("• Suche: ", "bullet"),
             ("Namen, Kategorie oder ID eintippen und Eingabetaste drücken. Der Baum zeigt nur "
              "noch die Treffer, und ein Treffer in einem Behälter klappt diesen auf, damit du "
@@ -2540,6 +2640,16 @@ class SaveEditorGUI:
             ("  - Stapel teilen...: ", "highlight"),
             ("Trennt einen Teil eines Stapels zu einem zweiten ab. Mindestens ein Stück bleibt "
              "zurück, denn alles abzutrennen wäre ein Verschieben und kein Teilen.\n", "bullet"),
+            ("  - Stapelgröße setzen...: ", "highlight"),
+            ("Schreibt, wie viele Einheiten ein Stapel enthält, bis zu dem, was der "
+             "Gegenstand fassen kann. Anders als beim Duplizieren wird dafür keine freie "
+             "Zelle gebraucht. Was das Spiel nie gestapelt hat, wird auch nicht zum Stapel.\n",
+             "bullet"),
+            ("  - Reparieren auf... -> fabrikneu: ", "highlight"),
+            ("Der Haken in dem Fenster macht das Gegenteil von einen Wert setzen: Er entfernt "
+             "den Zustand, den Vermerk, womit das Stück ankam, und die Ladungen. Genau das "
+             "heißt im Spiel mint - eine Reparatur auf Maximum bleibt eine Reparatur, weil "
+             "das Spiel den Vermerk behält, dass der Gegenstand Schaden hatte.\n", "bullet"),
             ("  - Anbauteile...: ", "highlight"),
             ("Montiert Teile an den Gegenstand und nimmt sie wieder ab. Das Fenster zeigt die "
              "Aufnahmen dieses Gegenstands mit dem, was darin sitzt, und deine Gegenstände, "
@@ -2621,7 +2731,20 @@ class SaveEditorGUI:
             ("Werte setzen", "highlight"),
             (".\n", "bullet"),
             ("• Cheats: ", "bullet"),
-            ("Nutze One-Click-Cheats, um alle Skills zu maximieren, 1.000.000 Credits an alle Händler zu übertragen oder alle Gegenstände vollständig zu reparieren.\n\n\n", "bullet"),
+            ("Fünf Knöpfe mit einem Klick. ", "bullet"),
+            ("Alle Skills maximieren", "highlight"),
+            (" und ", "bullet"),
+            ("Händlerguthaben auffüllen", "highlight"),
+            (" (je 1.000.000) tun, was sie sagen. ", "bullet"),
+            ("Alle Gegenstände reparieren", "highlight"),
+            (" bringt alles auf sein Maximum, ", "bullet"),
+            ("Alles auf fabrikneu", "highlight"),
+            (" nimmt stattdessen den Verschleißeintrag weg und geht damit weiter: der "
+             "Spielstand liest sich danach wie nie benutzt. ", "bullet"),
+            ("Alle Stapel auffüllen", "highlight"),
+            (" füllt jeden Stapel bis zu dem, was der jeweilige Gegenstand fasst. Die "
+             "letzten beiden fragen vorher und sagen hinterher, wie viel sie angefasst "
+             "haben; geschrieben wird nichts, bevor du übernimmst.\n\n\n", "bullet"),
             
             ("★ ÄNDERUNGEN SPEICHERN ★\n\n", "header"),
             ("• Änderungen übernehmen: ", "bullet"),
@@ -2659,6 +2782,11 @@ class SaveEditorGUI:
              "gruppiert und aufgeteilt in aktiv, erledigt und nie gesehen. Die "
              "Nie-gesehen-Zweige sind offen. Wähle eine Quest für den vollen Text, was sie "
              "voraussetzt, wer sie schickt und was sie bringt.\n", "bullet"),
+            ("• Suche: ", "bullet"),
+            ("Das Feld über dem Baum sucht in Questname, Auftragstext, Absender, Gruppe und "
+             "interner ID - eine halb erinnerte Zeile aus einem Brief reicht also, um sie "
+             "wiederzufinden. Was stehen bleibt, wird aufgeklappt gezeigt. Leeres Feld holt "
+             "die ganze Liste zurück.\n", "bullet"),
             ("• Nur zur Ansicht: ", "bullet"),
             ("Hier wird nichts zurückgeschrieben. Der Fortschritt einer laufenden Quest steht "
              "gar nicht im Spielstand, nur ihr Ziel - deshalb lässt er sich auch nicht "
@@ -2670,6 +2798,10 @@ class SaveEditorGUI:
              "Stufe, die das Modul dafür braucht. Jede Zeile nennt Ergebnis, Zutaten, Dauer "
              "und ob du sofort anfangen könntest. Bei Auswahl listet das Feld darunter jede "
              "Zutat als vorhanden / nötig und hebt hervor, was fehlt.\n", "bullet"),
+            ("• Suche: ", "bullet"),
+            ("Das Feld über dem Baum sucht in Modul, Rezeptname und Ergebnis - und auch in "
+             "den Zutaten, eine Zutat einzutippen beantwortet also \"was kann ich damit "
+             "überhaupt anfangen?\". Treffer werden aufgeklappt gezeigt.\n", "bullet"),
             ("• Noch nicht im Spiel: ", "bullet"),
             ("Manche Rezepte verlangen eine Werkbankstufe, für die es keinen Bauschritt gibt "
              "- der 3D-Printer endet bei Stufe 1 und hat Rezepte für 2 und 3. Die sind "
@@ -2695,7 +2827,9 @@ class SaveEditorGUI:
             ("★ РЕДАКТОР ИНВЕНТАРЯ ★\n\n", "header"),
             ("• Развернуть папки: ", "bullet"),
             ("Дважды щелкните", "highlight"),
-            (" по папкам категорий, чтобы показать их содержимое.\n", "bullet"),
+            (" по папкам категорий, чтобы показать их содержимое. Строка вида «5 стаков, "
+             "95 единиц» раскрывается так же — по строке на стак, и действие над такой "
+             "строкой касается только этого стака.\n", "bullet"),
             ("• Поиск: ", "bullet"),
             ("Введите название, категорию или идентификатор и нажмите Enter. В дереве "
              "останутся только совпадения, а найденное внутри контейнера раскроет этот "
@@ -2715,6 +2849,15 @@ class SaveEditorGUI:
             ("  - Разделить стак...: ", "highlight"),
             ("Отделяет часть стака во второй стак. Хотя бы одна штука остаётся на месте: "
              "отделить всё — это перемещение, а не разделение.\n", "bullet"),
+            ("  - Задать размер стака...: ", "highlight"),
+            ("Записывает, сколько единиц в стаке, вплоть до вместимости предмета. В отличие "
+             "от дублирования свободная клетка не нужна. То, что игра никогда не стакала, "
+             "стаком не становится.\n", "bullet"),
+            ("  - Починить до... -> как новое: ", "highlight"),
+            ("Галочка в этом окне делает обратное установке значения: она убирает состояние, "
+             "отметку о том, с чем предмет пришёл, и заряды. Именно это игра считает новым "
+             "состоянием — починка до максимума остаётся починкой, потому что игра хранит "
+             "запись о том, что предмет был повреждён.\n", "bullet"),
             ("  - Навесное...: ", "highlight"),
             ("Ставит части на предмет и снимает их обратно. Окно показывает слоты этого "
              "предмета с тем, что в них стоит, и ваши предметы, на которые он подходит — "
@@ -2794,7 +2937,20 @@ class SaveEditorGUI:
             ("Задать параметры", "highlight"),
             (".\n", "bullet"),
             ("• Читы: ", "bullet"),
-            ("Используйте читы в один клик для максимизации навыков, заполнения баланса торговцев (+1млн кредитов) или полной починки вещей.\n\n\n", "bullet"),
+            ("Пять кнопок в один клик. ", "bullet"),
+            ("Макс. все навыки", "highlight"),
+            (" и ", "bullet"),
+            ("Заполнить баланс торговцев", "highlight"),
+            (" (по 1 000 000) делают ровно то, что написано. ", "bullet"),
+            ("Починить все вещи", "highlight"),
+            (" доводит всё до максимума, а ", "bullet"),
+            ("Всё как новое", "highlight"),
+            (" вместо этого убирает саму запись об износе и идёт дальше: сохранение потом "
+             "читается как ни разу не использованное. ", "bullet"),
+            ("Заполнить все стаки", "highlight"),
+            (" доводит каждый стак до вместимости самой вещи. Последние два сначала "
+             "спрашивают, а потом сообщают, скольких вещей коснулись; до применения ничего "
+             "не записывается.\n\n\n", "bullet"),
             
             ("★ СОХРАНЕНИЕ ИЗМЕНЕНИЙ ★\n\n", "header"),
             ("• Применить изменения: ", "bullet"),
@@ -2831,6 +2987,11 @@ class SaveEditorGUI:
              "и по статусу: активные, завершённые и ни разу не встреченные. Ветки "
              "«ни разу» раскрыты сразу. Выберите квест, чтобы увидеть полный текст, "
              "что он требует, кто его присылает и что даёт.\n", "bullet"),
+            ("• Поиск: ", "bullet"),
+            ("Поле над деревом ищет по названию квеста, тексту задания, отправителю, группе "
+             "и внутреннему идентификатору - значит, хватит и полузабытой строки из письма. "
+             "То, что осталось, показывается раскрытым. Пустое поле возвращает весь "
+             "список.\n", "bullet"),
             ("• Только для просмотра: ", "bullet"),
             ("Здесь ничего не записывается. Прогресса активного квеста в сохранении нет "
              "вообще - есть только его цель, поэтому показать его тоже нельзя.\n\n\n",
@@ -2842,6 +3003,10 @@ class SaveEditorGUI:
              "который этот модуль требует. В строке — что даёт, что требует, сколько идёт и "
              "можно ли начать сейчас. При выборе панель снизу перечисляет каждый ингредиент "
              "как в наличии / нужно и выделяет то, чего не хватает.\n", "bullet"),
+            ("• Поиск: ", "bullet"),
+            ("Поле над деревом ищет по модулю, названию рецепта и тому, что он даёт - а ещё "
+             "по тому, что он расходует, так что ввод ингредиента отвечает на вопрос «а что "
+             "с этим вообще можно сделать?». Совпадения показываются раскрытыми.\n", "bullet"),
             ("• Ещё нет в игре: ", "bullet"),
             ("Некоторые рецепты требуют уровня верстака, для которого в игре нет шага "
              "постройки: 3D-принтер заканчивается на уровне 1 и несёт рецепты для 2 и 3. Они "
@@ -2999,14 +3164,25 @@ class SaveEditorGUI:
         self.cheats_lf = ttk.LabelFrame(left_pane, padding=10)
         self.cheats_lf.pack(fill="x")
 
+        # Two columns, because five stacked buttons run past the bottom of the pane at the
+        # window's 1100x680 minimum - measured in German, which is the long case for labels.
+        self.cheats_lf.columnconfigure(0, weight=1, uniform="cheat")
+        self.cheats_lf.columnconfigure(1, weight=1, uniform="cheat")
+
         self.cheat_repair_all_btn = ttk.Button(self.cheats_lf, command=self._cheat_repair_all)
-        self.cheat_repair_all_btn.pack(fill="x", pady=5)
+        self.cheat_repair_all_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=4)
+
+        self.cheat_mint_all_btn = ttk.Button(self.cheats_lf, command=self._cheat_mint_all)
+        self.cheat_mint_all_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=4)
+
+        self.cheat_fill_stacks_btn = ttk.Button(self.cheats_lf, command=self._cheat_fill_stacks)
+        self.cheat_fill_stacks_btn.grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=4)
 
         self.cheat_max_skills_btn = ttk.Button(self.cheats_lf, command=self._cheat_max_skills)
-        self.cheat_max_skills_btn.pack(fill="x", pady=5)
+        self.cheat_max_skills_btn.grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=4)
 
         self.cheat_fill_trader_btn = ttk.Button(self.cheats_lf, command=self._cheat_fill_trader_balances)
-        self.cheat_fill_trader_btn.pack(fill="x", pady=5)
+        self.cheat_fill_trader_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
 
         # 4. Right Pane Subnotebook (Skills & Traders)
         self.right_nb = ttk.Notebook(right_pane)
@@ -3184,8 +3360,22 @@ class SaveEditorGUI:
         has seen. The list therefore comes from the mapping report, and the save only
         decides which of three buckets a quest lands in.
         """
-        self.quests_count_lbl = ttk.Label(parent, style="Status.TLabel")
-        self.quests_count_lbl.pack(anchor="w", padx=10, pady=(10, 4))
+        quests_bar = ttk.Frame(parent)
+        quests_bar.pack(fill="x", padx=10, pady=(10, 4))
+        self.quests_count_lbl = ttk.Label(quests_bar, style="Status.TLabel")
+        self.quests_count_lbl.pack(side="left")
+
+        # Same shape as the catalog's and the inventory's: type, press Return, the tree keeps
+        # what matches. 302 rows across nine groups is more than anyone scrolls.
+        self.quest_search_btn = ttk.Button(quests_bar, command=self._refresh_quests_tree)
+        self.quest_search_btn.pack(side="right")
+        self.quest_search_var = tk.StringVar()
+        quest_search_entry = ttk.Entry(
+            quests_bar, textvariable=self.quest_search_var, width=26)
+        quest_search_entry.pack(side="right", padx=(6, 6))
+        quest_search_entry.bind("<Return>", lambda _event: self._refresh_quests_tree())
+        self.quest_search_lbl = ttk.Label(quests_bar)
+        self.quest_search_lbl.pack(side="right")
 
         # A paned window so the detail text can be dragged larger; long quest briefings run
         # to several hundred characters and a fixed split would either waste space or clip.
@@ -3338,9 +3528,18 @@ class SaveEditorGUI:
             ("done", t["quest_status_done"]),
         ]
 
+        query = self.quest_search_var.get().strip().lower() if hasattr(
+            self, "quest_search_var") else ""
+        matched = 0
+
         for group, rows in sorted(by_group.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            if query:
+                rows = [row for row in rows if self._quest_matches(row[0], row[1], query)]
+                if not rows:
+                    continue
+            matched += len(rows)
             group_node = self.quests_tree.insert(
-                "", "end", text=f"{group}  ({len(rows)})", open=False)
+                "", "end", text=f"{group}  ({len(rows)})", open=bool(query))
 
             buckets: dict[str, list[tuple[str, dict]]] = {"unseen": [], "active": [], "done": []}
             for quest_id, meta in rows:
@@ -3358,7 +3557,7 @@ class SaveEditorGUI:
                 status_node = self.quests_tree.insert(
                     group_node, "end",
                     text=f"{status_label}  ({len(bucket)})",
-                    open=status_key == "unseen",
+                    open=bool(query) or status_key == "unseen",
                 )
                 for quest_id, meta in sorted(bucket, key=lambda kv: self._quest_label(kv[1]).lower()):
                     flags = []
@@ -3376,10 +3575,28 @@ class SaveEditorGUI:
                     self._quest_row_ids[row_id] = quest_id
 
         seen = len(active_ids | done_ids)
-        self.quests_count_lbl.configure(text=t["quest_counts"].format(
-            total=len(meta_all), seen=seen, unseen=len(meta_all) - seen))
+        self.quests_count_lbl.configure(text=(
+            t["quest_counts_filtered"].format(count=matched, total=len(meta_all), query=
+                                              self.quest_search_var.get().strip())
+            if query else
+            t["quest_counts"].format(total=len(meta_all), seen=seen,
+                                     unseen=len(meta_all) - seen)))
         self.quests_hint.configure(text=t["quests_hint"])
         self._set_quest_detail(None)
+
+    def _quest_matches(self, quest_id: str, meta: dict, query: str) -> bool:
+        """Name, alias, group, briefing, sender and the quest's own id.
+
+        The alias is in there because that is what the 88 quests with no readable name are
+        listed under, and the briefing because "the one about the toymaker" is how anyone
+        actually remembers a quest.
+        """
+        sender = self._npc_name_for_npc_bio_id(meta.get("sender_npc_id")) or ""
+        haystack = " ".join(str(part) for part in (
+            self._quest_label(meta), meta.get("name") or "", meta.get("alias") or "",
+            meta.get("group") or "", meta.get("description") or "", sender, quest_id,
+        )).lower()
+        return query in haystack
 
     def _on_quest_selected(self, _event=None) -> None:
         selection = self.quests_tree.selection()
@@ -3946,6 +4163,74 @@ class SaveEditorGUI:
             parent=self.root
         )
         self._mark_pending_changes(t["status_cheat_repaired"].format(count=repaired_count))
+
+    def _cheat_mint_all(self) -> None:
+        """Every item in the save the way the game hands out a new one.
+
+        Asks first, because it rewrites a field on well over a thousand items - the repair
+        cheat next to it only touches the few that carry condition data.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        all_items = self.manager.get_all_items_flat()
+        if not messagebox.askyesno(
+                t["title"], t["msg_mint_all_confirm"].format(count=len(all_items)),
+                parent=self.root):
+            return
+
+        # One item at a time and without the subtree: the loop covers every item anyway.
+        cleared = sum(
+            len(self.manager.make_pristine(str(item.get("Id")), include_parts=False))
+            for item in all_items
+        )
+
+        if not cleared:
+            messagebox.showinfo(t["msg_success_title"], t["status_mint_nothing"],
+                                parent=self.root)
+            return
+
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        messagebox.showinfo(
+            t["msg_success_title"],
+            t["msg_cheats_mint"].format(count=cleared),
+            parent=self.root,
+        )
+        self._mark_pending_changes(t["status_mint"].format(count=cleared))
+
+    def _cheat_fill_stacks(self) -> None:
+        """Every partial stack up to its own capacity. Nothing is created, only counted up.
+
+        Measured on a real save: 135 stacks sit below capacity with 11,464 units of headroom
+        between them, and none of that can be reached by duplicating - a copy needs a cell.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        filled = units = 0
+        for item in self.manager.get_all_items_flat():
+            inner = (item.get("AdditionalData") or {}).get("_data")
+            if not isinstance(inner, dict):
+                continue
+            quantity = inner.get("StackableComponent_quantity")
+            if not isinstance(quantity, int) or isinstance(quantity, bool):
+                continue
+            capacity = self._stack_capacity_for_template(item.get("TemplateId"))
+            if not capacity or quantity >= capacity:
+                continue
+            inner["StackableComponent_quantity"] = capacity
+            units += capacity - quantity
+            filled += 1
+
+        if not filled:
+            messagebox.showinfo(t["msg_success_title"], t["msg_cheats_stacks_none"],
+                                parent=self.root)
+            return
+
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        messagebox.showinfo(t["msg_success_title"],
+                            t["msg_cheats_stacks"].format(count=filled, units=units),
+                            parent=self.root)
+        self._mark_pending_changes(
+            t["status_cheat_stacks"].format(count=filled, units=units))
 
     def _cheat_max_skills(self) -> None:
         t = TRANSLATIONS[self.current_lang]
@@ -4736,8 +5021,20 @@ class SaveEditorGUI:
 
     def _build_crafting_tab(self, parent: ttk.Frame) -> None:
         """Every workbench recipe, grouped by module and by the level it needs."""
-        self.crafting_count_lbl = ttk.Label(parent, style="Status.TLabel")
-        self.crafting_count_lbl.pack(anchor="w", padx=10, pady=(10, 4))
+        crafting_bar = ttk.Frame(parent)
+        crafting_bar.pack(fill="x", padx=10, pady=(10, 4))
+        self.crafting_count_lbl = ttk.Label(crafting_bar, style="Status.TLabel")
+        self.crafting_count_lbl.pack(side="left")
+
+        self.craft_search_btn = ttk.Button(crafting_bar, command=self._refresh_crafting_tree)
+        self.craft_search_btn.pack(side="right")
+        self.craft_search_var = tk.StringVar()
+        craft_search_entry = ttk.Entry(
+            crafting_bar, textvariable=self.craft_search_var, width=26)
+        craft_search_entry.pack(side="right", padx=(6, 6))
+        craft_search_entry.bind("<Return>", lambda _event: self._refresh_crafting_tree())
+        self.craft_search_lbl = ttk.Label(crafting_bar)
+        self.craft_search_lbl.pack(side="right")
 
         panes = ttk.PanedWindow(parent, orient="vertical")
         panes.pack(fill="both", expand=True, padx=8, pady=(0, 4))
@@ -4809,21 +5106,32 @@ class SaveEditorGUI:
             "unbuildable": t["craft_state_unbuildable"],
         }
 
+        query = self.craft_search_var.get().strip().lower() if hasattr(
+            self, "craft_search_var") else ""
+
         total = ready = 0
         for module_index, module in enumerate(modules):
             module["_level"] = levels.get(
                 str(module.get("foundation_id") or "").strip().lower(), 0)
             label = str(module.get("name") or module.get("alias") or "")
+
+            recipes = list(enumerate(module.get("recipes") or []))
+            if query:
+                recipes = [(index, recipe) for index, recipe in recipes
+                           if self._recipe_matches(recipe, label, query)]
+                if not recipes:
+                    continue
+
             node = self.crafting_tree.insert(
                 "", "end",
                 text=t["craft_module_row"].format(
                     name=label, level=module["_level"], max=module.get("max_level") or 0,
-                    count=len(module.get("recipes") or [])),
-                open=bool(module["_level"]),
+                    count=len(recipes)),
+                open=bool(query) or bool(module["_level"]),
             )
 
             by_level: dict[int, list[tuple[int, dict]]] = {}
-            for recipe_index, recipe in enumerate(module.get("recipes") or []):
+            for recipe_index, recipe in recipes:
                 min_level = recipe.get("min_level")
                 by_level.setdefault(min_level if isinstance(min_level, int) else 1, []).append(
                     (recipe_index, recipe))
@@ -4833,7 +5141,7 @@ class SaveEditorGUI:
                     node, "end",
                     text=t["craft_level_row"].format(
                         level=min_level, count=len(by_level[min_level])),
-                    open=min_level <= int(module["_level"] or 0),
+                    open=bool(query) or min_level <= int(module["_level"] or 0),
                 )
                 for recipe_index, recipe in by_level[min_level]:
                     state = self._recipe_state(recipe, module, owned)
@@ -4851,8 +5159,23 @@ class SaveEditorGUI:
                     self.crafting_rows[iid] = (module_index, recipe_index)
 
         self.crafting_count_lbl.configure(
-            text=t["craft_count"].format(
-                modules=len(modules), recipes=total, ready=ready))
+            text=(t["craft_count_filtered"].format(
+                recipes=total, ready=ready, query=self.craft_search_var.get().strip())
+                if query else
+                t["craft_count"].format(
+                    modules=len(modules), recipes=total, ready=ready)))
+
+    def _recipe_matches(self, recipe: dict, module_label: str, query: str) -> bool:
+        """What it makes, what it takes, its internal name, and the workbench it runs on.
+
+        The ingredients are in there on purpose: "what can I do with duct tape" is the
+        question this list answers best, and 254 recipe names are internal identifiers.
+        """
+        parts = [module_label, str(recipe.get("name") or ""), self._recipe_title(recipe)]
+        for side in ("inputs", "outputs"):
+            for row in recipe.get(side) or []:
+                parts.append(self._template_name_for_template_id(row.get("template_id")) or "")
+        return query in " ".join(parts).lower()
 
     def _recipe_part_text(self, row: dict) -> str:
         """"3x Acid" for one side of a recipe, with the count left out when it is one."""
@@ -6289,7 +6612,14 @@ class SaveEditorGUI:
             iid = self.tree.insert(parent_iid, "end", text=display_text)
             self.entry_members[iid] = members
 
-            children = self.manager.get_children(members[0]) if len(members) == 1 else []
+            if len(members) > 1:
+                # A grouped row stands for several separate items, so it opens into them.
+                # Before this the only way to reach one was the "which of the five" prompt,
+                # which asked for an index into a list nobody could see.
+                self.tree.insert(iid, "end", text="")
+                continue
+
+            children = self.manager.get_children(members[0])
             if not children:
                 continue
             if query and not self._item_matches_search(members[0], query):
@@ -6310,7 +6640,7 @@ class SaveEditorGUI:
         if not node or node in self.loaded_nodes:
             return
         members = self.entry_members.get(node)
-        if not members or len(members) != 1:
+        if not members:
             return
 
         children_nodes = self.tree.get_children(node)
@@ -6320,13 +6650,21 @@ class SaveEditorGUI:
         first_child = children_nodes[0]
         if len(children_nodes) == 1 and self.tree.item(first_child, "text") == "":
             self.tree.delete(first_child)
-            children = self.manager.get_children(members[0])
-            self._insert_entries(node, children)
+            if len(members) == 1:
+                self._insert_entries(node, self.manager.get_children(members[0]))
+            else:
+                # One row per member, each standing for exactly that item - so every action
+                # below works on the stack the user pointed at instead of asking for a number.
+                for member in members:
+                    child = self.tree.insert(
+                        node, "end", text=self._render_entry_text([member]))
+                    self.entry_members[child] = [member]
             self.loaded_nodes.add(node)
 
     def _restore_open_nodes(self, node: str, member_ids: set[str]) -> None:
+        # Keyed by the row's first member, so a grouped row that was open reopens too.
         members = self.entry_members.get(node, [])
-        if len(members) == 1 and members[0] in member_ids:
+        if members and members[0] in member_ids:
             self.tree.item(node, open=True)
             self._ensure_node_loaded(node)
 
@@ -6336,7 +6674,7 @@ class SaveEditorGUI:
     def _capture_open_member_ids(self) -> set[str]:
         open_ids: set[str] = set()
         for iid, members in self.entry_members.items():
-            if len(members) == 1 and self.tree.item(iid, "open"):
+            if members and self.tree.item(iid, "open"):
                 open_ids.add(members[0])
         return open_ids
 
@@ -6413,6 +6751,35 @@ class SaveEditorGUI:
                 repaired += 1
             stack.extend(self.manager.get_children(current))
         return repaired
+
+    def _make_mint(self, item_ids: list[str], include_parts: bool = True) -> int:
+        """Puts items back into the state the game gives a brand-new one, and counts them.
+
+        This is **not** a repair. Repairing writes `Condition_d: 4.0`, and the game keeps
+        that as "was damaged, restored" - a DORA the game shows as mint carries no condition
+        data at all, while a repaired KA74 next to it sits at 4.0 and is not mint. So factory
+        fresh removes the fields instead of writing into them.
+        """
+        return sum(len(self.manager.make_pristine(item_id, include_parts=include_parts))
+                   for item_id in item_ids)
+
+    def _apply_mint(self, item_ids: list[str], include_parts: bool = True) -> None:
+        """The dialog's factory-fresh path: write, refresh, report.
+
+        Says so out loud when there was nothing to do - an item that is already fresh looked
+        exactly like a broken feature the first time this shipped.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        cleared = self._make_mint(item_ids, include_parts=include_parts)
+        if not cleared:
+            messagebox.showinfo(t["custom_title_repair"], t["status_mint_nothing"],
+                                parent=self.root)
+            self._set_status(t["status_mint_nothing"])
+            return
+
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        self._mark_pending_changes(t["status_mint"].format(count=cleared))
 
     def _repair_item_id(self, item_id: str) -> None:
         item = self.manager.get_item(item_id)
@@ -6703,6 +7070,92 @@ class SaveEditorGUI:
         self._mark_pending_changes(
             t["status_moved"].format(count=len(moved), target=target_label))
         return True
+
+    def _set_stack_size_selected(self) -> None:
+        """Sets how many units one stack holds, without needing a free cell for it.
+
+        The editor could raise a count before this only by duplicating stacks, and a copy
+        needs somewhere to go: a real save has a tab with 21 free cells and no room for a
+        2x2. Writing the number costs no space at all.
+
+        Only an item that **already** carries `StackableComponent_quantity` is offered one.
+        Adding the field to something the game never stacked would invent a stack.
+        """
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        t = TRANSLATIONS[self.current_lang]
+
+        item = self.manager.get_item(item_id)
+        quantity = self._stack_quantity_of_item(item)
+        if not quantity:
+            messagebox.showinfo(t["stack_title"], t["stack_not_stackable"], parent=self.root)
+            return
+
+        capacity = self._stack_capacity_for_template((item or {}).get("TemplateId"))
+        value = self._ask_stack_size(quantity, capacity)
+        if value is None or value == quantity:
+            return
+
+        inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+        inner["StackableComponent_quantity"] = value
+        reopen = self._capture_open_member_ids()
+        self._populate_scope_view(reopen_member_ids=reopen)
+        self._mark_pending_changes(t["status_stack_set"].format(
+            name=self._template_name_for_item_id(item_id) or "?", count=value))
+
+    def _ask_stack_size(self, current: int, capacity: int | None) -> int | None:
+        """One number, refused rather than clamped when it is out of range.
+
+        The same `Invalid.TEntry` treatment level and XP already use: silently storing
+        something other than what the box shows is worse than saying no.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        top = capacity if isinstance(capacity, int) and capacity > 0 else None
+
+        win = tk.Toplevel(self.root)
+        win.title(t["stack_title"])
+        win.transient(self.root)
+        win.configure(bg="#1e1e1e")
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(
+            body,
+            text=(t["stack_prompt"].format(current=current, max=top) if top
+                  else t["stack_prompt_nomax"].format(current=current)),
+            wraplength=380,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        var = tk.StringVar(value=str(top or current))
+        entry = ttk.Entry(body, textvariable=var, width=12, justify="center")
+        entry.pack(anchor="w")
+
+        answer: list[int | None] = [None]
+
+        def confirm() -> None:
+            raw = var.get().strip()
+            if not raw.isdigit() or int(raw) < 1 or (top is not None and int(raw) > top):
+                entry.configure(style="Invalid.TEntry")
+                return
+            entry.configure(style="TEntry")
+            answer[0] = int(raw)
+            win.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e", pady=(14, 0))
+        ttk.Button(buttons, text=t["btn_cancel"], command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text=t["btn_ok"], command=confirm).pack(side="right", padx=(0, 6))
+
+        entry.focus_set()
+        entry.select_range(0, "end")
+        win.bind("<Return>", lambda _e: confirm())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        self._center_over_root(win)
+        win.grab_set()
+        self.root.wait_window(win)
+        return answer[0]
 
     def _split_selected(self) -> None:
         """Takes part of a stack off into a second stack."""
@@ -7944,6 +8397,10 @@ class SaveEditorGUI:
         # searched before telling the user there is nothing to set.
         subtree = self.manager.collect_subtree(item_id)
         carriers = [member for member in subtree if self._condition_fields_of(member)]
+
+        # Both halves of this window need a condition field to work on: setting a value
+        # writes into one, and factory fresh removes it. An item that carries none is already
+        # as fresh as the save can express, so there is nothing to offer.
         if not carriers:
             messagebox.showinfo(t["custom_title_repair"], t["custom_repair_none"],
                                 parent=self.root)
@@ -7977,12 +8434,29 @@ class SaveEditorGUI:
         entry = ttk.Entry(body, textvariable=value_var, width=14, justify="center")
         entry.pack(anchor="w")
 
-        children_var = tk.BooleanVar(value=len(carriers) > 1)
-        if len(carriers) > 1:
+        children_var = tk.BooleanVar(value=len(carriers) > 1 or len(subtree) > 1)
+        if len(carriers) > 1 or len(subtree) > 1:
             ttk.Checkbutton(body, text=t["custom_repair_children"],
                             variable=children_var).pack(anchor="w", pady=(10, 0))
 
+        # Factory fresh is not a condition value - it removes the field rather than writing
+        # one - so it takes the value box out of play instead of pretending to read it.
+        mint_var = tk.BooleanVar(value=False)
+
+        def on_mint_toggled() -> None:
+            entry.configure(state="disabled" if mint_var.get() else "normal")
+
+        ttk.Checkbutton(body, text=t["mint_checkbox"], variable=mint_var,
+                        command=on_mint_toggled).pack(anchor="w", pady=(6, 0))
+        ttk.Label(body, text=t["mint_hint"], wraplength=420, justify="left",
+                  style="Hint.TLabel").pack(anchor="w", pady=(4, 0))
+        on_mint_toggled()
+
         def confirm() -> None:
+            if mint_var.get():
+                win.destroy()
+                self._apply_mint([item_id], include_parts=children_var.get())
+                return
             try:
                 value = float(value_var.get().strip().replace(",", "."))
             except ValueError:
