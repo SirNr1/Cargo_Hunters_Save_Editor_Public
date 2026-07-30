@@ -16,6 +16,18 @@ CREDITS_TEMPLATE_ID = "cb567810-cc82-424f-893f-299c704ffb12"
 # editor did before this was configurable.
 BACKUP_KEEP_DEFAULT = 20
 
+# What the game writes on an item once it stops being factory fresh, and therefore what has
+# to go for it to be fresh again. **A mint item carries none of these**: confirmed in play on
+# 2026-07-30 against a DORA that the game shows as mint and that has no condition data at all,
+# while a repaired weapon sits at `Condition_d: 4.0` and is not mint. Repairing lifts the value
+# and leaves the record that the item deviated; only removing it undoes that.
+PRISTINE_FIELDS = (
+    "Condition_d",                      # current condition, 0-4
+    "Condition_mt",                     # the condition it arrived with
+    "DurabilityComponent_durability",   # remaining charges
+    "DurabilityComponent_md",           # the ceiling those charges can be restored to
+)
+
 
 def default_backup_dir() -> Path:
     """`backups` folder next to the application itself.
@@ -655,6 +667,55 @@ class SaveDataManager:
             order.append(current)
             stack.extend(self.get_children(current))
         return order
+
+    def is_pristine(self, item_id: str) -> bool:
+        """True when the item carries no wear at all - which is how the game stores a mint one."""
+        item = self.item_tree.get(str(item_id))
+        if not item:
+            return False
+        inner = (item.get("AdditionalData") or {}).get("_data") or {}
+        if not isinstance(inner, dict):
+            return True
+        return not any(field in inner for field in PRISTINE_FIELDS)
+
+    def make_pristine(self, item_id: str, include_parts: bool = True) -> List[str]:
+        """Removes every trace of wear and returns the ids that changed.
+
+        **Factory fresh is an absence, not a value.** Repairing writes `Condition_d: 4.0`,
+        which says "this was damaged and has been restored" - the game keeps that record and
+        no longer calls the item mint. An item it does call mint carries no condition data
+        whatsoever: measured on a DORA in a rifle case that the game shows as mint, against a
+        repaired KA74 sitting at 4.0 next to it.
+
+        `DurabilityComponent_*` goes with it for the same reason: a fresh consumable has no
+        charge count, because absence is what "untouched" looks like in this format.
+        """
+        root = str(item_id)
+        # Same refusal the other writers make: a warehouse tab is layout, not an item.
+        if root not in self.item_tree or self.is_structural(root):
+            return []
+
+        changed: List[str] = []
+        for member in (self.collect_subtree(root) if include_parts else [root]):
+            item = self.item_tree.get(member)
+            if not item:
+                continue
+            inner = (item.get("AdditionalData") or {}).get("_data")
+            if not isinstance(inner, dict):
+                continue
+            # Every field, not `any(...)`: that short-circuits on the first hit and leaves
+            # `Condition_mt` sitting behind the value it belongs to.
+            removed = [field for field in PRISTINE_FIELDS
+                       if inner.pop(field, None) is not None]
+            if not removed:
+                continue
+            # And nothing empty is left behind: the game writes no empty `_data` anywhere -
+            # 0 of them in a real save, while 638 of its 1901 items carry no `AdditionalData`
+            # at all. An item with nothing left to record simply has no such key.
+            if not inner:
+                item.pop("AdditionalData", None)
+            changed.append(member)
+        return changed
 
     def is_structural(self, item_id: str) -> bool:
         """True for the containers the save's layout rests on rather than ordinary items:
