@@ -153,6 +153,13 @@ TRANSLATIONS = {
         "tab_hackerman": "☢ Hackerman's Lab ☢",
         "tab_help": "Help / How to Use",
         "btn_refresh": "🔄 Refresh Names from Game",
+        "btn_reload": "📂 Reload",
+        "msg_reload_title": "Reload save",
+        "msg_reload_discards": ("Reloading reads the file on disk again.\n\n"
+                                "Your unsaved changes describe the version currently "
+                                "loaded and cannot be carried over - they will be lost.\n\n"
+                                "Reload anyway?"),
+        "status_reloaded": "Save reloaded from disk",
         "btn_apply": "Apply Changes",
         "btn_discard": "Discard Changes",
         "lbl_scope": "Scope:",
@@ -592,6 +599,13 @@ TRANSLATIONS = {
         "tab_hackerman": "☢ Hackermans Labor ☢",
         "tab_help": "Hilfe / Anleitung",
         "btn_refresh": "🔄 Spielnamen aktualisieren",
+        "btn_reload": "📂 Neu laden",
+        "msg_reload_title": "Spielstand neu laden",
+        "msg_reload_discards": ("Beim Neuladen wird die Datei erneut von der Platte "
+                                "gelesen.\n\nDeine ungespeicherten Änderungen beziehen "
+                                "sich auf den gerade geladenen Stand und lassen sich nicht "
+                                "übertragen - sie gehen verloren.\n\nTrotzdem neu laden?"),
+        "status_reloaded": "Spielstand neu von der Platte gelesen",
         "btn_apply": "Änderungen übernehmen",
         "btn_discard": "Änderungen verwerfen",
         "lbl_scope": "Bereich:",
@@ -1043,6 +1057,12 @@ TRANSLATIONS = {
         "tab_hackerman": "☢ Лаборатория Хакера ☢",
         "tab_help": "Справка / Инструкция",
         "btn_refresh": "🔄 Обновить имена из игры",
+        "btn_reload": "📂 Перечитать",
+        "msg_reload_title": "Перезагрузка сохранения",
+        "msg_reload_discards": ("При перезагрузке файл будет прочитан заново.\n\n"
+                                "Несохранённые изменения относятся к текущей версии "
+                                "и будут потеряны.\n\nВсё равно перезагрузить?"),
+        "status_reloaded": "Сохранение перечитано с диска",
         "btn_apply": "Применить изменения",
         "btn_discard": "Сбросить изменения",
         "lbl_scope": "Область:",
@@ -1791,6 +1811,28 @@ class SaveEditorGUI:
             except Exception as e:
                 print(f"Could not load image: {e}")
 
+        # The two buttons are packed **before** the badge, and that order is the point.
+        # pack(side="right") hands out space in call order, so whatever comes last gets
+        # what is left - and with the badge first that was not enough for a second button:
+        # it rendered as "Reload S". A decorative strip has to yield to a control, not the
+        # other way round, so the badge is now the one that gets clipped on a narrow window.
+
+        # Global Refresh Names button
+        self.refresh_btn = ttk.Button(
+            header_frame,
+            command=self._refresh_names_from_game,
+        )
+        self.refresh_btn.pack(side="right", padx=(10, 5))
+
+        # Re-read the save. It sits next to Refresh Names because both answer the same
+        # question - "the data underneath has moved on, catch up" - one for the game's
+        # assets, one for the save itself.
+        self.reload_btn = ttk.Button(
+            header_frame,
+            command=self._reload_save_from_disk,
+        )
+        self.reload_btn.pack(side="right", padx=(0, 5))
+
         # Hackerman quote badge
         self.badge_label = tk.Label(
             header_frame,
@@ -1800,13 +1842,6 @@ class SaveEditorGUI:
             bg="#1e1e1e"
         )
         self.badge_label.pack(side="right", padx=(0, 5))
-
-        # Global Refresh Names button
-        self.refresh_btn = ttk.Button(
-            header_frame,
-            command=self._refresh_names_from_game,
-        )
-        self.refresh_btn.pack(side="right", padx=(10, 5))
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=8, pady=(8, 0))
@@ -2191,6 +2226,7 @@ class SaveEditorGUI:
         self.title_label.configure(text=t["title"])
         self.subtitle_label.configure(text=t["active_session"])
         self.refresh_btn.configure(text=t["btn_refresh"])
+        self.reload_btn.configure(text=t["btn_reload"])
         
         # 2. Main Notebook Tabs
         self.notebook.tab(self.tab_inventory, text=t["tab_inventory"])
@@ -2410,7 +2446,12 @@ class SaveEditorGUI:
             ("• Scan Assets: ", "bullet"),
             ("Click ", "bullet"),
             ("Refresh Names from Game", "highlight"),
-            (" in the top-right corner. This parses game files to resolve encrypted IDs into readable item, skill, and trader names.\n\n\n", "bullet"),
+            (" in the top-right corner. This parses game files to resolve encrypted IDs into readable item, skill, and trader names.\n\n", "bullet"),
+
+            ("• Reload Save: ", "bullet"),
+            ("The game writes the save when a raid ends. If you leave this editor open while you play, click ", "bullet"),
+            ("Reload Save", "highlight"),
+            (" to read the file again instead of restarting. Unsaved changes cannot survive that and you will be asked first.\n\n\n", "bullet"),
 
             ("★ INVENTORY EDITOR ★\n\n", "header"),
             ("• Expand Folders: ", "bullet"),
@@ -2612,7 +2653,12 @@ class SaveEditorGUI:
             ("• Assets scannen: ", "bullet"),
             ("Klicke auf ", "bullet"),
             ("Spielnamen aktualisieren", "highlight"),
-            (" in der oberen rechten Ecke. Dies analysiert die Spieldateien, um kryptische IDs in lesbare Gegenstands-, Skill- und Händlernamen aufzulösen.\n\n\n", "bullet"),
+            (" in der oberen rechten Ecke. Dies analysiert die Spieldateien, um kryptische IDs in lesbare Gegenstands-, Skill- und Händlernamen aufzulösen.\n\n", "bullet"),
+
+            ("• Spielstand neu laden: ", "bullet"),
+            ("Das Spiel schreibt den Spielstand am Ende eines Raids. Wenn du den Editor beim Spielen offen lässt, klicke auf ", "bullet"),
+            ("Spielstand neu laden", "highlight"),
+            (", statt ihn neu zu starten. Ungespeicherte Änderungen überstehen das nicht - danach wird vorher gefragt.\n\n\n", "bullet"),
 
             ("★ INVENTAR-EDITOR ★\n\n", "header"),
             ("• Ordner erweitern: ", "bullet"),
@@ -2822,7 +2868,12 @@ class SaveEditorGUI:
             ("• Сканирование ресурсов: ", "bullet"),
             ("Нажмите кнопку ", "bullet"),
             ("Обновить имена из игры", "highlight"),
-            (" в правом верхнем углу окна. Это просканирует файлы игры для сопоставления зашифрованных ID с реальными именами предметов, навыков и торговцев.\n\n\n", "bullet"),
+            (" в правом верхнем углу окна. Это просканирует файлы игры для сопоставления зашифрованных ID с реальными именами предметов, навыков и торговцев.\n\n", "bullet"),
+
+            ("• Перезагрузить сохранение: ", "bullet"),
+            ("Игра записывает сохранение по окончании рейда. Если редактор остаётся открытым во время игры, нажмите ", "bullet"),
+            ("Перезагрузить сохранение", "highlight"),
+            (", вместо того чтобы перезапускать его. Несохранённые изменения этого не переживут - сначала будет задан вопрос.\n\n\n", "bullet"),
 
             ("★ РЕДАКТОР ИНВЕНТАРЯ ★\n\n", "header"),
             ("• Развернуть папки: ", "bullet"),
@@ -8826,16 +8877,8 @@ class SaveEditorGUI:
             )
             return
 
-        # Same refresh sequence as discarding: every view holds data from the old file.
-        current_scope = self.scope_var.get()
-        self._load_scope_options()
-        if current_scope in self.scope_labels:
-            self.scope_var.set(current_scope)
-            self._populate_scope_view()
-        self._refresh_mailbox()
-        self._refresh_char_tab()
-        self._refresh_quests_tree()
-        self._refresh_crafting_tree()
+        # Every view holds data from the old file.
+        self._repopulate_after_reload()
         # Offer edits from before the restore describe a file that is no longer on disk.
         self.shop_offer_undo = {}
         self._clear_pending_changes(t["status_restored"].format(
@@ -9063,6 +9106,57 @@ class SaveEditorGUI:
             self._clear_pending_changes("Changes applied to save file")
         self._refresh_char_tab()
 
+    def _repopulate_after_reload(self) -> None:
+        """Refill every view from the manager after the file underneath has been replaced.
+
+        Three callers need exactly this - discarding, restoring a backup, and reloading -
+        and it used to be written out at each of them. The copies had already drifted:
+        discarding did not refresh the quests tree, so a discard left that one tab showing
+        the file that was no longer loaded. One helper is what keeps the next one honest.
+        """
+        current_scope = self.scope_var.get()
+        self._load_scope_options()
+        if current_scope in self.scope_labels:
+            self.scope_var.set(current_scope)
+            self._populate_scope_view()
+        self._refresh_mailbox()
+        self._refresh_char_tab()
+        self._refresh_quests_tree()
+        self._refresh_crafting_tree()
+
+    def _reload_save_from_disk(self) -> None:
+        """Read the save again, so the editor shows what the game has written since.
+
+        The game writes `offline.save` when a raid ends. An editor left open beside it
+        therefore holds a picture that is one raid old, and until now the only way to catch
+        up was to close and reopen it.
+
+        Staged edits cannot survive this - they describe items in a file that has just been
+        replaced - so the question says so instead of dropping them quietly. Without pending
+        changes there is nothing to lose and nothing to ask.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        if self.has_pending_changes and not messagebox.askyesno(
+            t["msg_reload_title"],
+            t["msg_reload_discards"],
+            parent=self.root,
+        ):
+            return
+        try:
+            self.manager.reload_from_disk()
+        except Exception as exc:
+            messagebox.showerror(
+                t["msg_reload_title"],
+                t["msg_reload_failed"].format(exc=exc),
+                parent=self.root,
+            )
+            return
+        self._repopulate_after_reload()
+        # Every offer record describes a slot in the file that was just replaced - and the
+        # game regenerates the whole Commodities list on a stock refresh anyway.
+        self.shop_offer_undo = {}
+        self._clear_pending_changes(t["status_reloaded"])
+
     def _discard_pending_changes(self) -> None:
         if not self.has_pending_changes:
             return
@@ -9083,14 +9177,7 @@ class SaveEditorGUI:
                 parent=self.root,
             )
             return
-        current_scope = self.scope_var.get()
-        self._load_scope_options()
-        if current_scope in self.scope_labels:
-            self.scope_var.set(current_scope)
-            self._populate_scope_view()
-        self._refresh_mailbox()
-        self._refresh_char_tab()
-        self._refresh_crafting_tree()
+        self._repopulate_after_reload()
         # Trader offer edits that were never applied are gone with the reload, so only the
         # records for edits that did reach disk are still worth anything.
         self.shop_offer_undo = {
