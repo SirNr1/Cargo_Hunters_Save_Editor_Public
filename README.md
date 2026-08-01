@@ -121,6 +121,7 @@ If you find this tool helpful and want to support its continued development:
   * **Discard Changes** reverts pending edits to the last saved state.
   * **Keep backups** in the bottom right caps how many are kept — 20 by default, 0 keeps every one. Only files the editor named itself are ever deleted, so your own copies in that folder are safe.
   * **Restore backup...** next to it puts one back without leaving the editor: pick it from the list by timestamp, reason and size, and the editor replaces your save and reloads. Your current save is copied aside as `before_restore` first, so undoing the undo is one more click. A file the editor did not write itself is never offered, and a pick that turns out not to be a save is refused **before** your save is touched rather than halfway through.
+  * **Reload Save** at the top right reads the file again while the editor stays open. The game writes your save when a raid ends, so an editor left open beside it shows a state one raid old — this catches up without a restart. Unsaved changes describe the version being replaced and cannot come along, so you are asked first.
   * Auto-detects Steam `offline.save` files on Windows and Linux.
 * **🌍 Multi-Language Support (i18n)**:
   * English, German (Deutsch), and Russian (Русский).
