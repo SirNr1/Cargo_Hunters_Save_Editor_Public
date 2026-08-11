@@ -1150,6 +1150,7 @@ category_id,category_label,subcategory_id,subcategory_label,name,template_id,wid
 24,"",102,"Shield","BARS-3",dcb1ee64-6524-4cbb-975c-04c1514692af,3,4,10000,5.0,Items_en.m_TableData,high
 24,"",102,"Shield","Police shield",3d7b2d30-b205-42dd-ba70-00c6135bc7bc,3,4,5000,2.0,Items_en.m_TableData,high
 26,"",54,"Heavy weapon","Droid Boss - Janitor",dad65ed7-503d-4c2c-abe3-33694e0c210a,1,1,,,item_templates.alias,high
+26,"",54,"Heavy weapon","Helicopter_01",c0d5bf79-331f-49d9-8220-3451641f6449,1,1,,,item_templates.alias,high
 26,"",76,"","Enforcer_01",0f96a099-2251-4ec0-85cb-e7db93647063,1,1,,,item_templates.alias,high
 26,"",76,"","Hoarder_01",949103e9-579a-4a5a-bab8-24571917ca0d,1,1,,,item_templates.alias,high
 26,"",76,"","Hoarder_02",dbdbaaf5-4463-43f9-8612-b615951f27e5,1,1,,,item_templates.alias,high

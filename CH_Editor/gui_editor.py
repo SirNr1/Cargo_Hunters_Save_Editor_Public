@@ -143,6 +143,59 @@ def save_config_backup_keep(keep: int) -> None:
         pass
 
 
+def load_config_new_templates() -> set[str]:
+    """The template ids the last refresh added, so the catalog can mark them.
+
+    It lives in the config and not beside the report on purpose: it records what *this
+    user* has not looked at yet, which is not game data and has no business travelling
+    into a build. A report copied from another machine therefore arrives unmarked.
+    """
+    path = get_config_path()
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                ids = json.load(f).get("new_template_ids")
+            if isinstance(ids, list):
+                return {str(i).strip().lower() for i in ids if str(i).strip()}
+        except Exception:
+            pass
+    return set()
+
+
+def save_config_new_templates(ids: set[str]) -> None:
+    path = get_config_path()
+    try:
+        data = {}
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        # Lowercased on the way in as well as on the way out. The ids always arrive that way
+        # from the catalog, so this is only for a hand-edited config - but a file whose
+        # contents do not match what the reader compares against is a trap for later.
+        data["new_template_ids"] = sorted({str(i).strip().lower() for i in ids if str(i).strip()})
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+
+def newly_added_templates(before: set[str], after: set[str]) -> set[str]:
+    """What a refresh added, or nothing at all when the question cannot be answered.
+
+    **An empty `before` means there is no baseline, not that everything is new.** On a
+    first run - fresh clone, no report yet - every one of the 1595 templates would
+    otherwise light up, which says nothing and buries the handful that a game update
+    really brings. The same guard covers an extraction that came back with no catalog:
+    a run that resolved nothing cannot report what changed.
+    """
+    if not before or not after:
+        return set()
+    return {t for t in after if t not in before}
+
+
 TRANSLATIONS = {
     "en": {
         "title": "★ Cargo Hunters Save Editor ★",
@@ -246,6 +299,10 @@ TRANSLATIONS = {
         "status_trader_set": "Set trader stats level={level} balance={balance}",
         "status_mail_deleted": "Deleted letter index {index}",
         "msg_mapping_updated": "Name mapping updated.\nKnown names: {old_count} -> {new_count}{details}",
+        "msg_mapping_new_items": "{count} items are new since the last refresh.\nThe catalog marks them; \"Only new\" filters down to them.",
+        "cat_only_new": "Only new ({count})",
+        "target_no_room": "  -- no room for this item",
+        "place_size": "Space needed: {w} x {h} cells",
         "msg_err_game_folder_not_found": "Game folder not found:\n{game_dir}",
         "msg_prompt_game_folder": "Path to Cargo Hunters game folder:",
         "msg_game_folder_title": "Game folder",
@@ -692,6 +749,10 @@ TRANSLATIONS = {
         "status_trader_set": "Händlerwerte gesetzt: Level={level} Guthaben={balance}",
         "status_mail_deleted": "Brief an Index {index} gelöscht",
         "msg_mapping_updated": "Datenmapping aktualisiert.\nBekannte Namen: {old_count} -> {new_count}{details}",
+        "msg_mapping_new_items": "{count} Items sind seit der letzten Auffrischung neu.\nDer Katalog hebt sie hervor; \"Nur neue\" zeigt nur sie.",
+        "cat_only_new": "Nur neue ({count})",
+        "target_no_room": "  -- kein Platz für dieses Objekt",
+        "place_size": "Benötigter Platz: {w} x {h} Felder",
         "msg_err_game_folder_not_found": "Spielverzeichnis nicht gefunden:\n{game_dir}",
         "msg_prompt_game_folder": "Pfad zum Cargo Hunters Spielverzeichnis:",
         "msg_game_folder_title": "Spielverzeichnis",
@@ -1149,6 +1210,10 @@ TRANSLATIONS = {
         "status_trader_set": "Заданы параметры торговца: уровень={level} баланс={balance}",
         "status_mail_deleted": "Удалено письмо с индексом {index}",
         "msg_mapping_updated": "Маппинг имен обновлен.\nИзвестные имена: {old_count} -> {new_count}{details}",
+        "msg_mapping_new_items": "Новых предметов с прошлого обновления: {count}.\nВ каталоге они выделены; «Только новые» покажет только их.",
+        "cat_only_new": "Только новые ({count})",
+        "target_no_room": "  -- нет места для этого предмета",
+        "place_size": "Требуется места: {w} x {h} клеток",
         "msg_err_game_folder_not_found": "Папка игры не найдена:\n{game_dir}",
         "msg_prompt_game_folder": "Путь к папке игры Cargo Hunters:",
         "msg_game_folder_title": "Папка игры",
@@ -1615,13 +1680,31 @@ class SaveEditorGUI:
         self._drop_shop_offer_undo_file()
         # Read before the layout, which shows the value in the status bar.
         self.manager.backup_keep = load_config_backup_keep()
+        # What the last "Refresh Names from Game" added. Persisted, so the answer to "what
+        # did the update bring" survives closing the editor - which is when it is usually
+        # asked. Cleared and rewritten by the next refresh.
+        self.new_template_ids: set[str] = load_config_new_templates()
 
         self.root.title("Cargo Hunters Save Editor")
-        # 680, not 650: the Hackerman tab's left column - warning, profile, three cheat
-        # buttons - needs 487px in German at the minimum, and 650 leaves only 468. Measured
-        # in all three languages; English and Russian were clipping by a few pixels too.
-        self.root.minsize(1100, 680)
-        self._center_window(1100, 720)
+        # **Both numbers are measured, and 1100x680 was too small.** `tests/test_window_size.py`
+        # walks every tab in all three languages and compares each control bar's requested
+        # width against what the window actually leaves it; at 1100x680 it fails on:
+        #
+        #   the header, 1112px in Russian against 1084 available - the two header buttons
+        #   the height, 702px in German against 680 - the Hackerman tab's left column
+        #
+        # 1140 leaves the Russian header 12px of air, 710 leaves German 8. The old 680 was
+        # chosen for that same German column when it needed 487px; it has grown since, and
+        # nothing was measuring it.
+        #
+        # Two things had to be fixed before any number could be right, both in this file:
+        # the status label no longer asks for the width of the save path (see `width=1` on
+        # it), and the catalog toolbar is two rows, because on one it wanted 1276px in
+        # Russian and threw Apply and Discard off the edge.
+        self.root.minsize(1140, 710)
+        # Opens with a little air above the minimum rather than exactly at it - a window that
+        # starts at its own floor looks broken the first time anything is resized.
+        self._center_window(1180, 760)
 
         # Style Setup (Premium Dark Mode)
         self.root.configure(bg="#1e1e1e")
@@ -1766,6 +1849,7 @@ class SaveEditorGUI:
         self.catalog_search_var = tk.StringVar()
         self.catalog_category_var = tk.StringVar(value="All")
         self.catalog_subcategory_var = tk.StringVar(value="All")
+        self.catalog_only_new_var = tk.BooleanVar(value=False)
         self.music_playing = False
         self.music_process = None
 
@@ -1980,8 +2064,20 @@ class SaveEditorGUI:
         self.mail_tree.column("mail_id", width=360, anchor="w")
         self.mail_tree.pack(side="left", fill="both", expand=True)
 
+        # **Two rows, and that is a measurement rather than taste.** On one row the filters
+        # plus Apply/Discard ask for 1155px in English, 1262 in German and 1276 in Russian,
+        # against the 1076 a 1100px-wide window leaves - so German and Russian were clipping
+        # Apply and Discard off the right edge before the "only new" box was ever added, and
+        # English was 26px from doing the same. Everything here is pack(side=...), so what
+        # gets cut is whatever was packed last: exactly the two buttons that write to disk.
+        #
+        # Splitting by kind rather than evenly: the two dropdowns are the widest things in
+        # here (160px each) and the search is what people use most, so it gets its own row
+        # with room to spare. Worst case after the split is 845px, in Russian.
         catalog_toolbar = ttk.Frame(self.tab_catalog)
-        catalog_toolbar.pack(fill="x", padx=4, pady=4)
+        catalog_toolbar.pack(fill="x", padx=4, pady=(4, 0))
+        catalog_toolbar2 = ttk.Frame(self.tab_catalog)
+        catalog_toolbar2.pack(fill="x", padx=4, pady=(2, 4))
         self.cat_scope_lbl = ttk.Label(catalog_toolbar)
         self.cat_scope_lbl.pack(side="left", padx=(0, 6))
         self.catalog_category_combo = ttk.Combobox(
@@ -2009,20 +2105,30 @@ class SaveEditorGUI:
             "<<ComboboxSelected>>",
             lambda _event: self._refresh_catalog_tree(),
         )
-        self.cat_search_lbl = ttk.Label(catalog_toolbar)
+        # Second row: the search and the "only new" filter.
+        self.cat_search_lbl = ttk.Label(catalog_toolbar2)
         self.cat_search_lbl.pack(side="left", padx=(0, 6))
         catalog_search_entry = ttk.Entry(
-            catalog_toolbar,
+            catalog_toolbar2,
             textvariable=self.catalog_search_var,
             width=22,
         )
         catalog_search_entry.pack(side="left", padx=(0, 6))
         catalog_search_entry.bind("<Return>", lambda _event: self._refresh_catalog_tree())
         self.cat_search_btn = ttk.Button(
-            catalog_toolbar,
+            catalog_toolbar2,
             command=self._refresh_catalog_tree,
         )
         self.cat_search_btn.pack(side="left")
+        # A colour alone would mean scrolling 1595 rows to find three dozen. The checkbox
+        # is what makes the marking answer a question instead of decorating a list; its
+        # label carries the count, so the number is readable without ticking it.
+        self.cat_only_new_cb = ttk.Checkbutton(
+            catalog_toolbar2,
+            variable=self.catalog_only_new_var,
+            command=self._refresh_catalog_tree,
+        )
+        self.cat_only_new_cb.pack(side="left", padx=(12, 0))
         # Both catalog actions live in the tree's right-click menu, so Apply/Discard are
         # the only buttons here - same position as on the inventory toolbar.
         self.cat_discard_button = ttk.Button(
@@ -2067,6 +2173,10 @@ class SaveEditorGUI:
         self.catalog_tree.column("price", width=90, anchor="e")
         self.catalog_tree.column("mass", width=70, anchor="e")
         self.catalog_tree.pack(side="left", fill="both", expand=True)
+        # The app's accent, the same magenta the Help tab highlights with. Colour alone is
+        # not the feature - the "only new" checkbox is - so it never has to be the only way
+        # a row is recognised.
+        self.catalog_tree.tag_configure("new_template", foreground="#ff007f")
         self.catalog_tree.bind("<Button-3>", self._on_catalog_right_click)
 
         self.catalog_menu = tk.Menu(
@@ -2135,7 +2245,16 @@ class SaveEditorGUI:
         )
         self.restore_button.pack(side="right", padx=(12, 0))
 
-        status_bar = ttk.Label(status_bar_frame, textvariable=self.status_var, anchor="w", relief="flat", style="Status.TLabel")
+        # `width=1` is not a typo and not a size - it is what stops the status text from
+        # deciding how wide the window has to be. A ttk.Label asks for as many pixels as its
+        # text needs, and this text carries the **save path**: measured at 740px for
+        # `C:\Program Files (x86)\Steam\userdata\...\remote\offline.save`, which dragged the
+        # whole window's requested width to 1290 and made the declared minimum unreachable.
+        # A longer path would have asked for more, so no fixed minsize could ever have been
+        # right. With a minimal request and `expand=True` the label still gets every pixel
+        # that is left over; only its *demand* is bounded, and long text is cut at the edge.
+        status_bar = ttk.Label(status_bar_frame, textvariable=self.status_var, anchor="w",
+                               relief="flat", style="Status.TLabel", width=1)
         status_bar.pack(side="left", fill="x", expand=True)
 
         self.lang_map = {
@@ -2278,6 +2397,7 @@ class SaveEditorGUI:
         self._refresh_subcategory_filter()
         self.cat_search_lbl.configure(text=t["lbl_search"])
         self.cat_search_btn.configure(text=t["btn_search"])
+        self._relabel_only_new()
         self.quest_search_lbl.configure(text=t["lbl_search"])
         self.quest_search_btn.configure(text=t["btn_search"])
         self.craft_search_lbl.configure(text=t["lbl_search"])
@@ -4680,6 +4800,30 @@ class SaveEditorGUI:
     def _resolve_python_for_extractor(self) -> str:
         return sys.executable
 
+    def _catalog_template_ids(self) -> set[str]:
+        """The catalog's own template ids, lowercased like every other id lookup here."""
+        return {
+            str(row.get("template_id", "")).strip().lower()
+            for row in self.game_item_catalog
+            if str(row.get("template_id", "")).strip()
+        }
+
+    def _relabel_only_new(self) -> None:
+        """Put the count in the label, and switch the filter off when there is nothing.
+
+        A checkbox that reduces 1595 rows to none is a dead end which only answers after it
+        has been ticked - the same reason a container with no free cell is not offered as a
+        placement target. Disabling it also makes "nothing new" readable at a glance.
+        """
+        t = TRANSLATIONS[self.current_lang]
+        count = len(self.new_template_ids)
+        self.cat_only_new_cb.configure(text=t["cat_only_new"].format(count=count))
+        if count:
+            self.cat_only_new_cb.state(["!disabled"])
+        else:
+            self.catalog_only_new_var.set(False)
+            self.cat_only_new_cb.state(["disabled"])
+
     def _on_extraction_success(
         self,
         game_dir: Path,
@@ -4687,8 +4831,16 @@ class SaveEditorGUI:
         report: dict | None = None,
     ) -> None:
         old_count = len(self.template_name_map)
+        ids_before = self._catalog_template_ids()
         self.last_game_path = str(game_dir)
         self._load_template_name_map()
+        # Both of these have to happen *before* the views are rebuilt: the catalog reads
+        # `new_template_ids` while it inserts its rows, and `_relabel_only_new` may clear
+        # the filter when nothing is new. Setting them afterwards leaves the first render
+        # showing the previous refresh's marks.
+        self.new_template_ids = newly_added_templates(ids_before, self._catalog_template_ids())
+        save_config_new_templates(self.new_template_ids)
+        self._relabel_only_new()
         self._refresh_catalog_view()
         new_count = len(self.template_name_map)
         reopen = self._capture_open_member_ids()
@@ -4705,6 +4857,13 @@ class SaveEditorGUI:
             output_info = f"{output_info}\n\nWarning: {reason}\nNames may be incomplete.".strip()
 
         t = TRANSLATIONS[self.current_lang]
+        # Say the number here rather than only colouring rows on a tab the user may not be
+        # looking at. Silence when nothing was added is the honest answer to "what did the
+        # update bring", and is also what a first run reports - it has no baseline.
+        if self.new_template_ids:
+            output_info = (
+                f"{output_info}\n\n{t['msg_mapping_new_items'].format(count=len(self.new_template_ids))}"
+            ).strip()
         details = f"\n\n{output_info.strip()}" if output_info.strip() else ""
         messagebox.showinfo(
             t["msg_success_title"],
@@ -5461,6 +5620,37 @@ class SaveEditorGUI:
                 continue
             ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
             ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
+
+            data = (child.get("AdditionalData") or {}).get("_data") or {}
+            # Note for whoever comes next: `MaxSize` is read in the template's orientation
+            # while `_footprint_for_item` swaps the axes for `BaseComponent_rotated`, so a
+            # rotated item is compared against an unrotated ceiling. Swapping it was tried on
+            # 2026-08-10 and **not kept**: on a real save it made the margin larger, not
+            # smaller (31 cells to 34), and no measurement says which orientation the game
+            # uses for room it has not filled yet. Recorded in CHECKPOINT rather than fixed on
+            # a hunch - the safe direction here is the one that reserves more.
+
+            # **Reserve for growth only where growth has not already happened**, and the test
+            # of that is a stored size that is *larger* than the template's - never merely
+            # different. Measured on a real save on 2026-08-10: an Assault Weapon stored 4x1
+            # against a 2x1 template and a 6x3 maximum was holding 31 cells of a tab clear,
+            # and the space was visibly empty in game. It has grown, the game wrote what it
+            # covers, and reserving its maximum on top of that reserves for growth twice.
+            #
+            # **"Different" is the wrong test and `test_presets.py` refutes it**: the PRO90
+            # that cost seven stacks of ammunition stored **1x1** against a 2x1 template and a
+            # 4x2 maximum, and the game blocked the whole maximum anyway. A size below the
+            # template is not a statement about growth, so those keep their ceiling - as does
+            # the bare Gaston 17 whose size equals its template's, and the Herstal 57 next
+            # door, which carries a width and no height at all.
+            tw, th = meta.get("width"), meta.get("height")
+            stored = (data.get("BaseComponent_width"), data.get("BaseComponent_height"))
+            if (all(isinstance(v, int) for v in stored)
+                    and all(isinstance(v, int) for v in (tw, th))
+                    and stored[0] >= tw and stored[1] >= th
+                    and stored != (tw, th)):
+                ceiling_w = ceiling_h = 0
+
             width = max(footprint[0], ceiling_w) + ASSEMBLED_SLACK[0]
             height = max(footprint[1], ceiling_h) + ASSEMBLED_SLACK[1]
             anchor = self.manager.cell_of(child_id)
@@ -5489,7 +5679,7 @@ class SaveEditorGUI:
         cells = container_cells(spec)
         return bool(cells) and len(cells) == 1
 
-    def _placement_targets(self) -> list[tuple[str, str]]:
+    def _placement_targets(self, need: tuple[int, int] | None = None) -> list[tuple[str, str]]:
         """(container id, label) for the containers an item can be placed into.
 
         The warehouse tabs plus the containers carried on the character - a backpack, a rig,
@@ -5501,34 +5691,58 @@ class SaveEditorGUI:
 
         A container with no free cell is left out too. Offering one is offering a dead end -
         the choice is accepted and then answered with "no space", which reads like a bug.
+
+        **`need` marks, it does not remove.** Spawning an assembled EMERKIT SMG offered
+        "Tab 1 - 40 of 240 cells free" and then refused, because the weapon needs 6x3
+        *contiguous* cells and that tab has no such rectangle in either orientation - so the
+        list has to say something about the footprint. The first version said it by dropping
+        those containers, and that was wrong twice over: it takes away the overview, and it
+        hides destinations on the strength of a **reservation** that is itself an upper bound
+        with an open question in it (see `ASSEMBLED_SLACK`). If the reservation is too
+        cautious, removing the entry turns a guess into a verdict. A label leaves the choice
+        where it belongs and still answers the question before the choice is made.
+
+        The advertised count subtracts `_keep_out_cells`. Those cells are free of items but
+        the placement search will not use them, so counting them was the other half of the
+        same lie - it is what turned 15 usable cells into an advertised 40.
         """
         t = TRANSLATIONS[self.current_lang]
         targets: list[tuple[str, str]] = []
 
         def free_cells(container_id: str):
+            """(free, total, takes_it) or None when the container is no target at all."""
             if self._is_bookkeeping_container(container_id):
                 return None
             cells = self._container_cells_for(container_id)
             if not cells:
                 return None
             occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
-            free = len(cells) - len([c for c in occupied if c in cells])
-            return (free, len(cells)) if free > 0 else None
+            blocked = {c for c in occupied if c in cells}
+            blocked |= self._keep_out_cells(container_id) & cells
+            free = len(cells) - len(blocked)
+            if free <= 0:
+                return None
+            takes = (not need
+                     or find_placement(cells, blocked, need[0], need[1]) is not None)
+            return (free, len(cells), takes)
+
+        def beschriften(label: str, takes: bool) -> str:
+            return label if takes else label + t["target_no_room"]
 
         for idx, tab_id in enumerate(self.manager.get_inventory_tabs(), 1):
             room = free_cells(tab_id)
             if room is None:
                 continue
-            targets.append((tab_id, t["target_tab"].format(
-                idx=idx, free=room[0], total=room[1])))
+            targets.append((tab_id, beschriften(t["target_tab"].format(
+                idx=idx, free=room[0], total=room[1]), room[2])))
 
         for item_id in self.manager.get_character_items():
             room = free_cells(item_id)
             if room is None:
                 continue
             name = self._template_name_for_item_id(item_id) or t["target_container"]
-            targets.append((item_id, t["target_carried"].format(
-                name=name, free=room[0], total=room[1])))
+            targets.append((item_id, beschriften(t["target_carried"].format(
+                name=name, free=room[0], total=room[1]), room[2])))
 
         return targets
 
@@ -5537,6 +5751,7 @@ class SaveEditorGUI:
         title: str,
         same_container_id: str | None = None,
         allow_inbox: bool = True,
+        need: tuple[int, int] | None = None,
     ):
         """Lets the user pick where a new item goes. Returns a container id, the string
         "same" for the original's own container, or None when cancelled.
@@ -5551,7 +5766,7 @@ class SaveEditorGUI:
         than offered and hoped for.
         """
         t = TRANSLATIONS[self.current_lang]
-        targets = self._placement_targets()
+        targets = self._placement_targets(need)
         options: list[tuple[str, str]] = []
         if same_container_id:
             options.append(("same", t["target_same_container"]))
@@ -5576,6 +5791,11 @@ class SaveEditorGUI:
         body.pack(fill="both", expand=True)
 
         ttk.Label(body, text=t["msg_place_prompt"]).pack(anchor="w", pady=(0, 6))
+        # The size the choice is about, right where the choice is made. Without it the only
+        # way to know why a container is marked "no room" is to remember the catalog row.
+        if need:
+            ttk.Label(body, text=t["place_size"].format(w=need[0], h=need[1]),
+                      style="Hint.TLabel").pack(anchor="w", pady=(0, 6))
         combo = ttk.Combobox(body, state="readonly", width=54,
                              values=[label for _cid, label in options])
         combo.current(0)
@@ -5747,6 +5967,7 @@ class SaveEditorGUI:
             if head.isdigit():
                 subcategory_filter_id = int(head)
         search_filter = self.catalog_search_var.get().strip().lower()
+        only_new = bool(self.catalog_only_new_var.get())
         # 164 templates share a localized name with another one - eight of them all read
         # "Bodypart Blueprint". Those get the developer's own name appended, which tells 54
         # of the 55 groups apart. Names that are already unique stay clean.
@@ -5774,6 +5995,8 @@ class SaveEditorGUI:
             if isinstance(category_filter_id, int) and category_id != category_filter_id:
                 continue
             if isinstance(subcategory_filter_id, int) and subcategory_id != subcategory_filter_id:
+                continue
+            if only_new and template_id not in self.new_template_ids:
                 continue
             if search_filter:
                 haystack = (
@@ -5831,6 +6054,7 @@ class SaveEditorGUI:
                     price_text,
                     mass_text,
                 ),
+                tags=("new_template",) if template_id in self.new_template_ids else (),
             )
 
     def _refresh_catalog_view(self) -> None:
@@ -5883,6 +6107,8 @@ class SaveEditorGUI:
             capacity=capacity,
             condition_max=condition_max,
             condition_field=condition_field,
+            # The template's own size, which is what `_add_catalog_template` places with.
+            need=self._footprint_for_template(template_id),
         )
         if result is None:
             return
@@ -6162,6 +6388,33 @@ class SaveEditorGUI:
         # best statement available.
         return self._footprint_for_template(template_id)
 
+    def _preset_reservation(self, preset: dict) -> tuple[int, int] | None:
+        """The contiguous room an assembled preset needs: **its finished size plus a cell.**
+
+        Not `MaxSize`. A weapon that arrives with its parts on it is not going to grow again,
+        and reserving what it *could* have grown to reserves for growth that has already
+        happened - the same rule `_keep_out_cells` follows for a neighbour the game has
+        already sized, and the two must not disagree about the same weapon.
+
+        Measured on a real save on 2026-08-11, across the **34 assembled weapons the game
+        itself built**: none is taller than 2 cells or wider than 5, while the old reservation
+        asked for 6x3 to 7x4 - four to nine times the area. A 1A4M the game stores at 3x1 was
+        being given 28 cells.
+
+        **The one cell of `ASSEMBLED_SLACK` stays**, and that is measured too, on the same
+        save: a Neckar SR93 stored 4x1 has the game blocking 5x2 around it, exactly one cell
+        further on each axis. Dropping it would put the new weapon on a cell its neighbour
+        really claims, which is the corner the seven mailed ammunition stacks came from.
+
+        `_preset_grown_size` overshoots rather than under-reports (see there), so this stays an
+        upper bound on the finished size - the right direction. Only when it cannot be computed
+        at all does the `MaxSize` estimate stand in.
+        """
+        grown = self._preset_grown_size(preset)
+        if grown is not None:
+            return (grown[0] + ASSEMBLED_SLACK[0], grown[1] + ASSEMBLED_SLACK[1])
+        return self._assembled_reservation(str(preset.get("root") or ""))
+
     def _fill_required_slots(self, item_id: str, _depth: int = 0) -> int:
         """Puts the parts a template's **required** slots demand into a freshly created item.
 
@@ -6220,15 +6473,9 @@ class SaveEditorGUI:
         root_template = str(preset.get("root") or "")
         meta = self.game_item_meta_by_template_id.get(root_template, {})
         footprint = self._footprint_for_template(root_template)
-        ceiling = self._assembled_reservation(root_template)
-        grown = self._preset_grown_size(preset)
-        if footprint is None or ceiling is None:
+        reservation = self._preset_reservation(preset)
+        if footprint is None or reservation is None:
             return None, 0, 0
-        # Whichever of the two says more. `MaxSize` is what the template claims it can grow to,
-        # the sum of the parts' `resize` is what this configuration adds; for 8 of the 53
-        # presets the second is the larger, and those are the ones MaxSize alone under-reserved.
-        reservation = (max(ceiling[0], (grown or ceiling)[0]),
-                       max(ceiling[1], (grown or ceiling)[1]))
         spot = self._placement_in(parent_id, reservation[0], reservation[1])
         if spot is None:
             return None, 0, 0
@@ -6316,7 +6563,12 @@ class SaveEditorGUI:
 
         # No inbox: an assembled weapon is a subtree, and mail delivery of a subtree is
         # untested. Every other destination is a real container with a real grid.
-        target = self._ask_placement_target(t["preset_title"], allow_inbox=False)
+        #
+        # `need` is the reservation, not the weapon's drawn size: this is the dialog that
+        # offered a tab with 40 free cells and then refused, because none of them formed the
+        # 6x3 rectangle the finished weapon claims.
+        target = self._ask_placement_target(
+            t["preset_title"], allow_inbox=False, need=self._preset_reservation(preset))
         if not target:
             return
 
@@ -6883,7 +7135,8 @@ class SaveEditorGUI:
         if target is None:
             origin_parent = str((self.manager.get_item(members[0]) or {}).get("ParentId") or "")
             target = self._ask_placement_target(
-                t["ctx_duplicate"], same_container_id=origin_parent or None)
+                t["ctx_duplicate"], same_container_id=origin_parent or None,
+                need=self._footprint_for_item(members[0]))
         if not target:
             return []
 
@@ -7014,6 +7267,8 @@ class SaveEditorGUI:
             count_default=1,
             capacity=capacity,
             same_container_id=origin_parent or None,
+            # A copy covers exactly what the original covers.
+            need=self._footprint_for_item(members[0]),
         )
         if result is None:
             return
@@ -7068,7 +7323,8 @@ class SaveEditorGUI:
             return False
 
         origin_parent = str((self.manager.get_item(item_id) or {}).get("ParentId") or "")
-        target = self._ask_placement_target(t["move_title"])
+        target = self._ask_placement_target(
+            t["move_title"], need=self._footprint_for_item(item_id))
         if not target:
             return False
 
@@ -7232,6 +7488,8 @@ class SaveEditorGUI:
             capacity=None,
             same_container_id=origin_parent or None,
             hint=t["split_hint"],
+            # The split-off part is the same kind of item, so it covers the same cells.
+            need=self._footprint_for_item(item_id),
         )
         if result is None:
             return
@@ -8267,6 +8525,7 @@ class SaveEditorGUI:
         condition_field: str | None = None,
         count_max: int = 9999,
         hint: str | None = None,
+        need: tuple[int, int] | None = None,
     ) -> tuple[int, int | None, float | None, str] | None:
         """Count, stack size, starting condition and destination in one window.
 
@@ -8286,7 +8545,12 @@ class SaveEditorGUI:
         targets: list[tuple[str, str]] = []
         if same_container_id:
             targets.append(("same", t["target_same_container"]))
-        targets.extend(self._placement_targets())
+        # `need` is the footprint the caller is about to place. Without it this list offers
+        # containers that hold a free cell somewhere but no room for *this* item, and the
+        # spawn then answers "no space" after the destination has been chosen - reported from
+        # play for a 3x2 into a tab whose 15 free cells all sat inside a growable neighbour's
+        # margin. See `_placement_targets`.
+        targets.extend(self._placement_targets(need))
         targets.append(("inbox", t["target_inbox"]))
 
         win = tk.Toplevel(self.root)
@@ -8329,6 +8593,14 @@ class SaveEditorGUI:
             condition_entry = ttk.Entry(body, textvariable=condition_var, width=12,
                                         justify="center")
             condition_entry.grid(row=row_index, column=1, sticky="w", pady=(0, 6), padx=(10, 0))
+            row_index += 1
+
+        # The size the destination has to accommodate, next to the destination itself - the
+        # same reason the placement dialog shows it.
+        if need:
+            ttk.Label(body, text=t["place_size"].format(w=need[0], h=need[1]),
+                      style="Hint.TLabel").grid(row=row_index, column=0, columnspan=2,
+                                                sticky="w", pady=(6, 0))
             row_index += 1
 
         ttk.Label(body, text=t["custom_target"]).grid(
