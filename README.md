@@ -7,7 +7,7 @@ Desktop save editor, interactive database & wiki for the Steam game **Cargo Hunt
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-**Note on game data:** All item information is datamined directly from the game files. This can include stages or content that exist in the data but are not yet unlocked or released in the game itself.
+> **Note on game data:** All item information is datamined directly from the game files. This can include stages or content that exist in the data but are not yet unlocked or released in the game itself.
 
 ---
 
