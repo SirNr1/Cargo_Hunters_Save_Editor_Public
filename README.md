@@ -1,4 +1,5 @@
 # Cargo Hunters Save Editor 🛠️
+### *The Ultimate Save Management & Companion Suite for Cargo Hunters*
 
 **English** · [Русский](README.ru.md)
 
