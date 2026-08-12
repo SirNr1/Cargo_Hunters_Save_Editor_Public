@@ -1792,7 +1792,11 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                             name = "Raid Shop (Port)"
                         else:
                             name = "Raid Shop (Yellow Van)"
-                    trader_mapping[shop_id.strip().lower()] = name
+                    # Same guard as shops_meta below: one shop without an Id would otherwise
+                    # raise here and the blanket except would silently drop every trader
+                    # after it from the mapping.
+                    if isinstance(shop_id, str) and shop_id.strip():
+                        trader_mapping[shop_id.strip().lower()] = name
 
                 # `ShopBalance` is what the game itself gives this trader: 500000 for the two
                 # that sell and for QuickSell, 100 for the price-reference shop, and nothing
@@ -2197,7 +2201,9 @@ def run_extraction(
             "item_bundle_slug_count": len(bundle_hints["bundle_slug_hints"]),
             "catalog_items_total": len(item_catalog),
         },
-        "mapping": mapping,
+        # No `mapping` block: it duplicated `item_catalog` name for name and doubled the
+        # file. The full mapping table still lands in template_mapping.csv below; the app
+        # reads names from `item_catalog` and falls back to `mapping` only in old reports.
         "item_catalog": item_catalog,
         "npc_name_mapping": repository_names.get("npc_candidates", {}),
         "skills_mapping": repository_names.get("skills_mapping", {}),
@@ -2215,7 +2221,9 @@ def run_extraction(
 
     json_path = out_dir / "template_mapping_report.json"
     with json_path.open("w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+        # Compact on purpose: only the app reads this file, and indenting it cost 1.1 MB
+        # of whitespace. The CSVs next to it are the human-readable view.
+        json.dump(report, f, ensure_ascii=False)
 
     csv_path = out_dir / "template_mapping.csv"
     with csv_path.open("w", encoding="utf-8") as f:

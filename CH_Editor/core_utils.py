@@ -1,5 +1,6 @@
 import json
 import copy
+import os
 import re
 import shutil
 import sys
@@ -476,13 +477,19 @@ class SaveDataManager:
         ]
 
     def get_inventory_tabs(self) -> List[str]:
-        """Ids of the top-level tab containers in the main warehouse (InventoryDto), in tab order."""
+        """Ids of the top-level tab containers in the main warehouse (InventoryDto), in tab order.
+
+        Read from `children_map` rather than by scanning every item: `is_structural` calls
+        this from the bulk mutation paths, where the full scan turned a pass over all items
+        quadratic - 0.43 s for one "everything factory fresh" over ~2000 items, measured.
+        `children_map` is kept current by every mutating method, so the answer is the same.
+        """
         root = self.section_roots.get("InventoryDto")
         if not root:
             return []
         tab_ids = [
-            s_id for s_id, item in self.item_tree.items()
-            if self.item_origin.get(s_id) == "InventoryDto" and str(item.get("ParentId")) == root
+            s_id for s_id in self.children_map.get(root, [])
+            if self.item_origin.get(s_id) == "InventoryDto"
         ]
 
         def sort_key(s_id: str):
@@ -969,7 +976,7 @@ class SaveDataManager:
         if not item or not isinstance(amount, int) or amount < 1:
             return None
 
-        inner = item.get("AdditionalData", {}).get("_data", {})
+        inner = (item.get("AdditionalData") or {}).get("_data", {})
         quantity = inner.get("StackableComponent_quantity") if isinstance(inner, dict) else None
         if not isinstance(quantity, int) or isinstance(quantity, bool):
             return None
@@ -1095,8 +1102,24 @@ class SaveDataManager:
                 self.backup_dir, self.backup_keep, protect=bak_path
             )
 
-        with self.save_path.open("w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        # Written to a sibling file and swapped in with os.replace, so a failure mid-write
+        # - full disk, crash, a cloud sync grabbing the file - cannot leave a truncated
+        # save behind: the original stays untouched until the swap, and the swap is atomic.
+        # The name ends in neither `.save` nor the backup shape, so no glob here or in the
+        # gitignore can mistake the leftover of a failed write for a save or a backup.
+        tmp_path = self.save_path.with_name(f"{self.save_path.name}.tmp-{os.getpid()}")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.save_path)
+        except BaseException:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            raise
 
         return bak_path
 

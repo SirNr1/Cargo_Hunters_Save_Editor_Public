@@ -26,9 +26,12 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        # Pinned: UnityPy 1.25.2 produced the committed mapping report, PyInstaller
+        # 6.21.0 the verified build. An unpinned UnityPy release can silently break
+        # the name extraction rather than the build.
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller UnityPy
+          pip install pyinstaller==6.21.0 UnityPy==1.25.2
 
       - name: Build with PyInstaller
         run: |

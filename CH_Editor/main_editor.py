@@ -99,7 +99,7 @@ def repair_item_logic(item, max_durability=None):
     Nothing is written when the values already match, so callers can tell an actual
     repair from a no-op.
     """
-    inner_data = item.get("AdditionalData", {}).get("_data", {})
+    inner_data = (item.get("AdditionalData") or {}).get("_data", {})
 
     if "DurabilityComponent_durability" in inner_data:
         target = max_durability

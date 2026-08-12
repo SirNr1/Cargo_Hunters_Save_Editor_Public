@@ -23,6 +23,12 @@ from main_editor import build_entries, describe_entry, repair_item_logic
 
 STEAM_APP_ID = "4197990"
 
+# "Quests and Keys", a community guide on Steam - where quest objectives and key spawns are,
+# mostly as screenshots. Linked from the Quests tab rather than imported: it is someone else's
+# work with no reuse licence, and it carries no per-section anchors, so there is nothing to
+# link *into* even for the quests whose names match ours.
+QUEST_GUIDE_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id=3686288040"
+
 # Pixel width the Hackerman warning text wraps at; keeps the banner narrow and tall
 # regardless of how long the translated strings are.
 WARNING_WRAPLENGTH = 280
@@ -367,6 +373,7 @@ TRANSLATIONS = {
         "status_items_deleted": "Deleted {count} item(s) (not saved yet)",
         "msg_skill_level_range": "Invalid level. This skill goes from 0 to {max_level}.",
         "msg_trader_level_range": "Invalid level. A trader goes from {min_level} to {max_level}.",
+        "msg_trader_balance_range": "Invalid balance. This trader holds 0 to {max_balance} - the game cuts anything above that down on load.",
         "btn_level_max": "MAX",
         "lbl_skill_points": "Unspent skill points:",
         "tab_counters": "Counters",
@@ -415,7 +422,8 @@ TRANSLATIONS = {
         "quest_flag_hidden": "not listed",
         "quest_flag_shadow": "shadow",
         "quest_group_none": "Ungrouped",
-        "quests_hint": "Read-only. What the game ships against what this save has met. The progress of a running quest is not in the save at all, so it cannot be shown.",
+        "quests_hint": "Read-only. What the game ships against what this save has met. The progress of a running quest is not in the save at all, so it cannot be shown. Where to go and what to look for is not in the game files either — the button above opens a community guide on Steam, written by another player, in your browser.",
+        "quests_guide_btn": "Community guide ↗",
         "quests_empty": "No quest data. Use Refresh Names from Game to read it from the game files.",
         "quest_pick": "Pick a quest to see its full text.",
         "quest_detail_alias": "Internal name",
@@ -817,6 +825,7 @@ TRANSLATIONS = {
         "status_items_deleted": "{count} Gegenstand/Gegenstände gelöscht (noch nicht gespeichert)",
         "msg_skill_level_range": "Ungültige Stufe. Dieser Skill geht von 0 bis {max_level}.",
         "msg_trader_level_range": "Ungültige Stufe. Ein Händler geht von {min_level} bis {max_level}.",
+        "msg_trader_balance_range": "Ungültiges Guthaben. Dieser Händler hält 0 bis {max_balance} - alles darüber stutzt das Spiel beim Laden zurecht.",
         "btn_level_max": "MAX",
         "lbl_skill_points": "Freie Skillpunkte:",
         "tab_counters": "Statistik",
@@ -865,7 +874,8 @@ TRANSLATIONS = {
         "quest_flag_hidden": "nicht gelistet",
         "quest_flag_shadow": "verdeckt",
         "quest_group_none": "Ohne Gruppe",
-        "quests_hint": "Nur zur Ansicht. Was das Spiel mitbringt, gegen das, was dieser Spielstand kennt. Der Fortschritt einer laufenden Quest steht gar nicht im Spielstand und kann deshalb nicht angezeigt werden.",
+        "quests_hint": "Nur zur Ansicht. Was das Spiel mitbringt, gegen das, was dieser Spielstand kennt. Der Fortschritt einer laufenden Quest steht gar nicht im Spielstand und kann deshalb nicht angezeigt werden. Wohin man muss und worauf man achten sollte, steht ebenso wenig in den Spieldateien — der Knopf oben öffnet einen Community-Guide auf Steam, geschrieben von einem anderen Spieler, in deinem Browser.",
+        "quests_guide_btn": "Community-Guide ↗",
         "quests_empty": "Keine Questdaten. Mit „Refresh Names from Game“ aus den Spieldateien lesen.",
         "quest_pick": "Wähle eine Quest, um den vollen Text zu sehen.",
         "quest_detail_alias": "Interner Name",
@@ -1278,6 +1288,7 @@ TRANSLATIONS = {
         "status_items_deleted": "Удалено предметов: {count} (ещё не сохранено)",
         "msg_skill_level_range": "Неверный уровень. У этого навыка диапазон 0-{max_level}.",
         "msg_trader_level_range": "Неверный уровень. У торговца диапазон {min_level}-{max_level}.",
+        "msg_trader_balance_range": "Неверный баланс. У этого торговца диапазон 0-{max_balance} - всё сверх игра урезает при загрузке.",
         "btn_level_max": "МАКС",
         "lbl_skill_points": "Свободные очки навыков:",
         "tab_counters": "Статистика",
@@ -1326,7 +1337,8 @@ TRANSLATIONS = {
         "quest_flag_hidden": "нет в списке",
         "quest_flag_shadow": "скрытый",
         "quest_group_none": "Без группы",
-        "quests_hint": "Только для просмотра. Что есть в игре против того, что встречалось в этом сохранении. Прогресса активного квеста в сохранении нет вовсе, поэтому показать его нельзя.",
+        "quests_hint": "Только для просмотра. Что есть в игре против того, что встречалось в этом сохранении. Прогресса активного квеста в сохранении нет вовсе, поэтому показать его нельзя. Куда идти и на что смотреть, в файлах игры тоже не записано — кнопка выше открывает в браузере руководство сообщества на Steam, написанное другим игроком.",
+        "quests_guide_btn": "Руководство сообщества ↗",
         "quests_empty": "Нет данных о квестах. Нажмите Refresh Names from Game.",
         "quest_pick": "Выберите квест, чтобы увидеть полный текст.",
         "quest_detail_alias": "Внутреннее имя",
@@ -1663,6 +1675,11 @@ class SaveEditorGUI:
         # Answers "does this item or anything under it match", filled while a filtered tree
         # is built and dropped again afterwards: a match depends on the query.
         self._search_match_cache: dict[str, bool] = {}
+        # One item's searchable text, built once per populate run instead of once per
+        # question about the item. Query-independent on purpose - the expand path can ask
+        # with a fresher query than the tree was built with, so caching the *match* here
+        # would hand it a stale answer. Same lifecycle as the match cache above.
+        self._search_haystack_cache: dict[str, str] = {}
         self.scope_labels: list[str] = []
         self.mail_index_map: dict[str, int] = {}
         self.template_name_map: dict[str, str] = {}
@@ -2306,11 +2323,13 @@ class SaveEditorGUI:
         colors = ["#ff007f", "#3794ff", "#00f0ff", "#a020f0", "#39ff14"]
         if not hasattr(self, 'badge_color_idx'):
             self.badge_color_idx = 0
-        
+
         self.badge_label.configure(fg=colors[self.badge_color_idx])
         self.badge_color_idx = (self.badge_color_idx + 1) % len(colors)
-        
-        self.root.after(400, self._animate_badge)
+
+        # The handle exists so _shutdown can cancel this before destroy() - a callback
+        # firing after the root is gone dies with "invalid command name".
+        self._badge_after_id = self.root.after(400, self._animate_badge)
 
     def _get_system_language(self) -> str:
         return get_system_language()
@@ -2400,6 +2419,7 @@ class SaveEditorGUI:
         self._relabel_only_new()
         self.quest_search_lbl.configure(text=t["lbl_search"])
         self.quest_search_btn.configure(text=t["btn_search"])
+        self.quests_guide_btn.configure(text=t["quests_guide_btn"])
         self.craft_search_lbl.configure(text=t["lbl_search"])
         self.craft_search_btn.configure(text=t["btn_search"])
         self.catalog_menu.entryconfigure(0, label=t["ctx_add_to_inv"])
@@ -2437,11 +2457,7 @@ class SaveEditorGUI:
         # 6. Hackerman Tab Warning Frame
         self.warning_title.configure(text=t["lbl_warn_title"])
         self.warning_desc.configure(text=t["lbl_warn_desc"])
-        self.last_warn_data = {
-            "title": t["lbl_warn_title"],
-            "desc": t["lbl_warn_desc"]
-        }
-        
+
         # Profile Frame
         self.profile_lf.configure(text=t["lf_profile"])
         self.nickname_lbl.configure(text=t["lbl_nickname"])
@@ -3269,12 +3285,6 @@ class SaveEditorGUI:
         )
         self.warning_desc.pack(fill="x")
 
-        # Initialize last_warn_data for unit tests
-        self.last_warn_data = {
-            "title": "",
-            "desc": ""
-        }
-
         # 2. Profile Details Frame
         self.profile_lf = ttk.LabelFrame(left_pane, padding=10)
         self.profile_lf.pack(fill="x", pady=(0, 10))
@@ -3535,6 +3545,15 @@ class SaveEditorGUI:
         quests_bar.pack(fill="x", padx=10, pady=(10, 4))
         self.quests_count_lbl = ttk.Label(quests_bar, style="Status.TLabel")
         self.quests_count_lbl.pack(side="left")
+
+        # A link, not an import. The guide is another player's work on Steam: 225 screenshots
+        # of where things are, plus notes on the keys. Two things ruled out bringing any of it
+        # into the tab - it carries no reuse licence, and it has **no section anchors**, so
+        # there is nothing to deep-link to even for the 21 quests whose names match ours. So
+        # the honest form is a door, clearly marked as leading outside.
+        self.quests_guide_btn = ttk.Button(
+            quests_bar, command=lambda: webbrowser.open(QUEST_GUIDE_URL))
+        self.quests_guide_btn.pack(side="left", padx=(12, 0))
 
         # Same shape as the catalog's and the inventory's: type, press Return, the tree keeps
         # what matches. 302 rows across nine groups is more than anyone scrolls.
@@ -4126,23 +4145,6 @@ class SaveEditorGUI:
         values = self.skills_tree.item(selected[0], "values")
         return int(values[0]) if values else None
 
-    def _skill_level_in_save(self, skill_id: int) -> int:
-        """The level as staged, which is what minus and plus step from.
-
-        Deliberately not the spinbox: it is refilled by <<TreeviewSelect>>, and Tk delivers
-        that on the next idle rather than during the call that re-selects the row. Stepping
-        from the widget would work in the running app and be one behind anywhere else.
-        """
-        skills = (self.manager.data.get("AccountDto", {})
-                  .get("SkillsDto", {}).get("Skills", []))
-        for skill in skills:
-            if skill.get("Id") == skill_id:
-                try:
-                    return int(skill.get("Level") or 0)
-                except (TypeError, ValueError):
-                    return 0
-        return 0
-
     def _write_skill_level(self, skill_id: int, new_level: int) -> None:
         """Stages the level, refills the readout and puts the selection back on the row."""
         t = TRANSLATIONS[self.current_lang]
@@ -4293,8 +4295,7 @@ class SaveEditorGUI:
             if new_balance < 0:
                 raise ValueError()
         except ValueError:
-            messagebox.showerror(t["title"], "Invalid balance. Must be a non-negative integer.")
-            return
+            new_balance = None
 
         shops_list = self.manager.data.setdefault("AccountShops", [])
         shop = next((s for s in shops_list if s.get("Id") == trader_id), None)
@@ -4302,10 +4303,20 @@ class SaveEditorGUI:
             messagebox.showerror(t["title"], f"Trader {trader_id} not found in save data.")
             return
 
+        currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
+        # Refused above the cap rather than clamped, like the level field above: the game
+        # cuts the balance down to its template's ShopBalance on load (confirmed in-game
+        # 2026-07-28 - wrote a million, read 500000 back), so a bigger number in the save
+        # is a value the user never gets. The check needs the shop, hence after the lookup.
+        max_balance = self._balance_for_shop(shop, currency_key)
+        if new_balance is None or new_balance > max_balance:
+            messagebox.showerror(
+                t["title"], t["msg_trader_balance_range"].format(max_balance=max_balance))
+            return
+
         shop["AccountLevel"] = new_level
 
         balance_dict = shop.setdefault("Balance", {})
-        currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
         balance_dict[currency_key] = new_balance
 
         self._refresh_traders_list()
@@ -4674,6 +4685,15 @@ class SaveEditorGUI:
 
             mapping = report.get("mapping", [])
             if not isinstance(mapping, list):
+                mapping = []
+            catalog_rows = report.get("item_catalog")
+            has_catalog = isinstance(catalog_rows, list) and bool(catalog_rows)
+            # `mapping` used to be the implicit validity check before the loop committed
+            # to a candidate. Newer reports no longer carry it - it duplicated
+            # `item_catalog` name for name - so the check is explicit now: a report with
+            # neither block is not a report, and the next candidate gets its turn instead
+            # of this one silently yielding an empty name map.
+            if not mapping and not has_catalog:
                 continue
 
             npc_mapping = report.get("npc_name_mapping", {})
@@ -4749,18 +4769,28 @@ class SaveEditorGUI:
                     self.game_item_catalog.append(row)
                     self.game_item_meta_by_template_id[template_id] = row
 
+            # Names come from `item_catalog` (`name`), which the app reads anyway. Old
+            # reports carried the identical names a second time under `mapping`
+            # (`name_guess`) - measured name for name across all 1596 templates - which
+            # is why newer reports drop that block and old ones still load here.
             loaded: dict[str, str] = {}
-            for row in mapping:
-                if not isinstance(row, dict):
-                    continue
-                tid = row.get("template_id")
-                name = row.get("name_guess")
-                if not isinstance(tid, str) or not isinstance(name, str):
-                    continue
-                name = name.strip()
-                if not name:
-                    continue
-                loaded[tid.lower()] = name
+
+            def harvest_names(rows: list, name_key: str) -> None:
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    tid = row.get("template_id")
+                    name = row.get(name_key)
+                    if not isinstance(tid, str) or not isinstance(name, str):
+                        continue
+                    name = name.strip()
+                    if not name:
+                        continue
+                    loaded[tid.lower()] = name
+
+            harvest_names(catalog_rows if has_catalog else [], "name")
+            if not loaded:
+                harvest_names(mapping, "name_guess")
 
             for key, value in self.manual_alias_map.items():
                 loaded[key] = value
@@ -4919,6 +4949,16 @@ class SaveEditorGUI:
         if scripts_dir.exists() and str(scripts_dir) not in sys.path:
             sys.path.insert(0, str(scripts_dir))
 
+        # Closing the window while an extraction thread is still running destroys the Tk
+        # root under it; `root.after` then raises, the failure handler's own `root.after`
+        # raises again, and the thread dies on an unhandled exception. There is no UI left
+        # to report to at that point, so the result is deliberately dropped instead.
+        def post_to_ui(callback) -> None:
+            try:
+                self.root.after(0, callback)
+            except tk.TclError:
+                pass
+
         try:
             import extract_template_mapping
 
@@ -4930,18 +4970,14 @@ class SaveEditorGUI:
                         out_dir_str=out_dir_str,
                         locale=locale_str,
                     )
-                    self.root.after(
-                        0,
-                        lambda r=report: self._on_extraction_success(game_dir, report=r),
+                    post_to_ui(
+                        lambda r=report: self._on_extraction_success(game_dir, report=r)
                     )
                 except Exception as ex:
                     # Bind the message now: `ex` is unbound once the except block exits,
                     # so a closure over it would raise NameError inside the Tk callback.
                     message = f"Error in-process: {ex}"
-                    self.root.after(
-                        0,
-                        lambda m=message: self._on_extraction_failure(m),
-                    )
+                    post_to_ui(lambda m=message: self._on_extraction_failure(m))
 
             threading.Thread(target=thread_target, daemon=True).start()
 
@@ -4981,9 +5017,8 @@ class SaveEditorGUI:
                         check=False,
                     )
                     if result.returncode == 0:
-                        self.root.after(
-                            0,
-                            lambda: self._on_extraction_success(game_dir, result.stdout),
+                        post_to_ui(
+                            lambda: self._on_extraction_success(game_dir, result.stdout)
                         )
                     else:
                         details = "\n\n".join(
@@ -4994,18 +5029,14 @@ class SaveEditorGUI:
                             ]
                             if part
                         )
-                        self.root.after(
-                            0,
+                        post_to_ui(
                             lambda: self._on_extraction_failure(
                                 f"Extractor failed (exit {result.returncode}).\n\n{details}"
-                            ),
+                            )
                         )
                 except Exception as ex:
                     message = f"Failed to run extractor subprocess:\n{ex}"
-                    self.root.after(
-                        0,
-                        lambda m=message: self._on_extraction_failure(m),
-                    )
+                    post_to_ui(lambda m=message: self._on_extraction_failure(m))
 
             threading.Thread(target=subprocess_target, daemon=True).start()
 
@@ -5035,7 +5066,7 @@ class SaveEditorGUI:
         that is the instance's current ceiling. 0.0 makes the caller omit the percentage
         rather than compute one against a made-up number.
         """
-        inner = item.get("AdditionalData", {}).get("_data", {})
+        inner = (item.get("AdditionalData") or {}).get("_data", {})
         if isinstance(inner, dict):
             instance_max = inner.get("DurabilityComponent_md")
             if isinstance(instance_max, (int, float)) and instance_max > 0:
@@ -5063,7 +5094,7 @@ class SaveEditorGUI:
         """Units held by a single stacked item, as stored in the save."""
         if not isinstance(item, dict):
             return None
-        inner = item.get("AdditionalData", {}).get("_data", {})
+        inner = (item.get("AdditionalData") or {}).get("_data", {})
         if not isinstance(inner, dict):
             return None
         quantity = inner.get("StackableComponent_quantity")
@@ -5088,7 +5119,7 @@ class SaveEditorGUI:
     def _item_condition_parts(self, item: dict | None) -> tuple[str, float, float] | None:
         if not isinstance(item, dict):
             return None
-        inner = item.get("AdditionalData", {}).get("_data", {})
+        inner = (item.get("AdditionalData") or {}).get("_data", {})
         if not isinstance(inner, dict):
             return None
         durability = inner.get("DurabilityComponent_durability")
@@ -5860,20 +5891,6 @@ class SaveEditorGUI:
 
     def _on_scope_changed(self, _event: tk.Event) -> None:
         self._populate_scope_view()
-
-    def _target_inventory_tab_parent_id(self) -> str | None:
-        tabs = self.manager.get_inventory_tabs()
-        scope = self.scope_var.get().strip()
-        if scope.startswith("Tab "):
-            try:
-                idx = int(scope.split()[1]) - 1
-            except (ValueError, IndexError):
-                idx = -1
-            if 0 <= idx < len(tabs):
-                return tabs[idx]
-        if tabs:
-            return tabs[0]
-        return None
 
     def _refresh_catalog_filters(self) -> None:
         categories: set[tuple[int, str]] = set()
@@ -6880,6 +6897,7 @@ class SaveEditorGUI:
         self.entry_members.clear()
         self.loaded_nodes.clear()
         self._search_match_cache.clear()
+        self._search_haystack_cache.clear()
 
         scope, start_ids = self._scope_start_ids()
         query = self._search_query()
@@ -7098,24 +7116,6 @@ class SaveEditorGUI:
         reopen = self._capture_open_member_ids()
         self._populate_scope_view(reopen_member_ids=reopen)
         self._mark_pending_changes(f"Edited item {item_id} (not saved yet)")
-
-    def _prompt_duplicate_count(self, is_stack: bool, stack_size: int) -> int | None:
-        if is_stack:
-            prompt = (
-                f"This is a stack with {stack_size} items.\n"
-                "How many full-stack copies should be created?"
-            )
-            title = "Duplicate stack"
-        else:
-            prompt = "How many copies should be created for this item?"
-            title = "Duplicate item"
-        return simpledialog.askinteger(
-            title,
-            prompt,
-            minvalue=1,
-            initialvalue=1,
-            parent=self.root,
-        )
 
     def _duplicate_members(
         self,
@@ -8698,7 +8698,7 @@ class SaveEditorGUI:
         item = self.manager.get_item(item_id)
         if not item:
             return None
-        inner = item.get("AdditionalData", {}).get("_data", {})
+        inner = (item.get("AdditionalData") or {}).get("_data", {})
         if not isinstance(inner, dict):
             return None
         if "DurabilityComponent_durability" in inner:
@@ -9211,8 +9211,13 @@ class SaveEditorGUI:
         """Everything about one item worth searching: its name, both ids, its categories.
 
         Deliberately the same set of fields the catalog filter reads, plus the item id,
-        which only a save has.
+        which only a save has. Cached per populate run: with a filter active, the tree
+        build and the status-line count each used to reassemble this for every item in
+        the scope - name resolution, five meta lookups and a join, twice over.
         """
+        cached = self._search_haystack_cache.get(item_id)
+        if cached is not None:
+            return cached
         item = self.manager.get_item(item_id) or {}
         template_id = str(item.get("TemplateId") or "")
         meta = self.game_item_meta_by_template_id.get(template_id.lower(), {})
@@ -9225,7 +9230,9 @@ class SaveEditorGUI:
             str(meta.get("category_label") or ""),
             str(meta.get("subcategory_label") or ""),
         )
-        return " ".join(parts).lower()
+        haystack = " ".join(parts).lower()
+        self._search_haystack_cache[item_id] = haystack
+        return haystack
 
     def _item_matches_search(self, item_id: str, query: str) -> bool:
         # The empty-query guard cannot be reached through any caller - every one of them is
@@ -9458,11 +9465,24 @@ class SaveEditorGUI:
         }
         self._clear_pending_changes("Unsaved changes discarded")
 
+    def _shutdown(self) -> None:
+        """The one way out. Cancels the badge timer before destroy() - a pending after()
+        callback outliving the root dies with "invalid command name" - and stops the
+        music. One helper instead of three copies, so the close paths cannot drift; not
+        in _stop_music, which also runs on mute and must not touch the animation."""
+        after_id = getattr(self, "_badge_after_id", None)
+        if after_id is not None:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self._stop_music()
+        self.root.destroy()
+
     def _on_close_requested(self) -> None:
         t = TRANSLATIONS[self.current_lang]
         if not self.has_pending_changes:
-            self._stop_music()
-            self.root.destroy()
+            self._shutdown()
             return
 
         decision = messagebox.askyesnocancel(
@@ -9476,8 +9496,7 @@ class SaveEditorGUI:
             self._apply_pending_changes()
             if self.has_pending_changes:
                 return
-            self._stop_music()
-            self.root.destroy()
+            self._shutdown()
             return
 
         try:
@@ -9489,8 +9508,7 @@ class SaveEditorGUI:
                 parent=self.root,
             )
             return
-        self._stop_music()
-        self.root.destroy()
+        self._shutdown()
 
     def _asset_path(self, filename: str) -> Path:
         if getattr(sys, 'frozen', False):
@@ -9551,7 +9569,12 @@ class SaveEditorGUI:
                     except Exception:
                         pass
             except Exception:
-                time.sleep(1.0)
+                # aplay missing or unusable. One failed attempt answers the question for
+                # the whole session - retrying every second for the app's lifetime would
+                # poll for a player that is not going to appear. Only the flag is touched:
+                # this is a worker thread, and widgets belong to the Tk thread.
+                self.music_playing = False
+                break
 
     def _stop_music(self) -> None:
         self.music_playing = False
