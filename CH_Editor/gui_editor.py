@@ -23,6 +23,17 @@ from main_editor import build_entries, describe_entry, repair_item_logic
 
 STEAM_APP_ID = "4197990"
 
+# The build of Cargo Hunters this release was developed and tested against - the same
+# statement the trainer makes with its own BUILD constant, and for the same reason: an item
+# catalog and a save layout are only ever right for a version of the game. Maintained by
+# hand on release, never derived from whatever the user has installed. Which build the
+# *names* came from is a different question, answered by `game_version` in the mapping
+# report - a user can hold a newer game than this editor was tested with, and the help text
+# below says what to do then.
+GAME_BUILD_TESTED = "0.26.38.59"
+GAME_BUILD_TESTED_STEAM = "24834221"
+GAME_BUILD_TESTED_DATE = "2026-08-22"
+
 # "Quests and Keys", a community guide on Steam - where quest objectives and key spawns are,
 # mostly as screenshots. Linked from the Quests tab rather than imported: it is someone else's
 # work with no reuse licence, and it carries no per-section anchors, so there is nothing to
@@ -2578,6 +2589,15 @@ class SaveEditorGUI:
         self.help_text_area.tag_bind("link", "<Leave>", lambda _: self.help_text_area.configure(cursor=""))
         
         self.help_text_en = [
+            ("★ BUILT FOR GAME VERSION ", "header"),
+            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
+            ("• Tested against: ", "bullet"),
+            (f"Cargo Hunters {GAME_BUILD_TESTED} (Steam build {GAME_BUILD_TESTED_STEAM}, "
+             f"{GAME_BUILD_TESTED_DATE}). A game update can add items or change what the save "
+             "holds. If your game is newer, run ", "bullet"),
+            ("Refresh Names from Game", "highlight"),
+            (" first - that alone fixes new items showing as raw IDs.\n\n\n", "bullet"),
+
             ("★ UPDATE NAMES FROM GAME ★\n\n", "header"),
             ("• Scan Assets: ", "bullet"),
             ("Click ", "bullet"),
@@ -2785,6 +2805,15 @@ class SaveEditorGUI:
         ]
 
         self.help_text_de = [
+            ("★ GEBAUT FÜR SPIELVERSION ", "header"),
+            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
+            ("• Getestet gegen: ", "bullet"),
+            (f"Cargo Hunters {GAME_BUILD_TESTED} (Steam-Build {GAME_BUILD_TESTED_STEAM}, "
+             f"{GAME_BUILD_TESTED_DATE}). Ein Spiel-Update kann Gegenstände hinzufügen oder "
+             "ändern, was im Speicherstand steht. Ist dein Spiel neuer, zuerst ", "bullet"),
+            ("Namen aus dem Spiel aktualisieren", "highlight"),
+            (" ausführen - das allein behebt neue Gegenstände, die als rohe IDs erscheinen.\n\n\n", "bullet"),
+
             ("★ SPIELNAMEN AKTUALISIEREN ★\n\n", "header"),
             ("• Assets scannen: ", "bullet"),
             ("Klicke auf ", "bullet"),
@@ -3000,6 +3029,15 @@ class SaveEditorGUI:
         ]
 
         self.help_text_ru = [
+            ("★ СОБРАНО ДЛЯ ВЕРСИИ ИГРЫ ", "header"),
+            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
+            ("• Проверено на: ", "bullet"),
+            (f"Cargo Hunters {GAME_BUILD_TESTED} (сборка Steam {GAME_BUILD_TESTED_STEAM}, "
+             f"{GAME_BUILD_TESTED_DATE}). Обновление игры может добавить предметы или изменить "
+             "содержимое сохранения. Если игра новее, сначала выполните ", "bullet"),
+            ("Обновить имена из игры", "highlight"),
+            (" - это уже исправит новые предметы, показанные как сырые ID.\n\n\n", "bullet"),
+
             ("★ ОБНОВЛЕНИЕ ИГРОВЫХ ИМЕН ★\n\n", "header"),
             ("• Сканирование ресурсов: ", "bullet"),
             ("Нажмите кнопку ", "bullet"),

@@ -12,6 +12,8 @@ GUID_RE = re.compile(
 # reading a price means picking this template out of the price's item list. Repeated here
 # rather than imported: this script is standalone and does not depend on CH_Editor.
 CREDITS_ID = "cb567810-cc82-424f-893f-299c704ffb12"
+# The game on Steam. Only used to find its appmanifest for the build id.
+STEAM_APP_ID = "4197990"
 LOG_TEMPLATE_RE = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)TemplateId=([0-9a-fA-F-]{36})",
     flags=re.IGNORECASE,
@@ -108,6 +110,55 @@ def derive_pretty_name_from_bundle_slug(slug: str) -> str:
     if not text:
         return slug
     return " ".join(part.capitalize() for part in text.split())
+
+
+def collect_game_version(game_path: Path) -> dict[str, Any]:
+    """Which build of the game this report describes.
+
+    Two independent answers, because they fail in different situations and neither is
+    worth a whole report on its own:
+
+    - `bundle_version` is Unity's own `bundleVersion` out of `globalgamemanagers`, which
+      sits **inside** the game folder. It survives a copied install and a non-Steam one,
+      and it is the number the game itself shows, so it is the primary answer.
+    - `steam_build_id` comes from `appmanifest_<appid>.acf`, two levels above the game
+      folder. More precise - it changes on every push, while the version string may not -
+      but it only exists in a Steam layout.
+
+    Only the numbers travel into the report, never the paths they came from: the report is
+    committed, and the manifest lives under the user's own library.
+    """
+    version: dict[str, Any] = {"bundle_version": None, "steam_build_id": None}
+
+    try:
+        import UnityPy  # type: ignore
+
+        managers = game_path / "CargoHunters_Data" / "globalgamemanagers"
+        if managers.exists():
+            for obj in UnityPy.load(str(managers)).objects:
+                if obj.type.name != "PlayerSettings":
+                    continue
+                value = obj.read_typetree().get("bundleVersion")
+                if isinstance(value, str) and value.strip():
+                    version["bundle_version"] = value.strip()
+                break
+    except Exception:
+        # A missing UnityPy or an unreadable file leaves the field at None. The build is
+        # provenance, so it must never be able to fail a run that resolved names fine.
+        pass
+
+    try:
+        manifest = game_path.parent.parent / f"appmanifest_{STEAM_APP_ID}.acf"
+        if manifest.exists():
+            match = re.search(
+                r'"buildid"\s*"(\d+)"', manifest.read_text(encoding="utf-8", errors="replace")
+            )
+            if match:
+                version["steam_build_id"] = match.group(1)
+    except Exception:
+        pass
+
+    return version
 
 
 def collect_bundle_slug_hints(game_path: Path) -> dict[str, Any]:
@@ -2132,6 +2183,7 @@ def run_extraction(
     save_usage = collect_save_template_usage(save_path)
     log_hints = collect_log_template_hints(game_path)
     bundle_hints = collect_bundle_slug_hints(game_path)
+    game_version = collect_game_version(game_path)
     repository_names = collect_repository_localized_names(game_path, locale=locale)
     unitypy_data = collect_unitypy_candidates(game_path)
     mapping = build_final_mapping(save_usage, log_hints, repository_names, unitypy_data)
@@ -2157,6 +2209,10 @@ def run_extraction(
         # Steam's userdata/<id64>/4197990/remote - a full path would publish that id. Nothing
         # reads this field; it exists to say which save the run was measured against.
         "save_path": save_path.name,
+        # Which build of the game these names describe. Provenance, and the one question a
+        # stale report cannot answer about itself: after an update, "was this extracted
+        # before or after" is otherwise only answerable from commit messages.
+        "game_version": game_version,
         "unitypy_enabled": bool(unitypy_data.get("enabled")),
         "unitypy_reason": unitypy_data.get("reason"),
         "repository_mapping_enabled": bool(repository_names.get("enabled")),
@@ -2298,6 +2354,13 @@ def main() -> None:
     print(f"Wrote report: {out_dir / 'template_mapping_report.json'}")
     print(f"Wrote table : {out_dir / 'template_mapping.csv'}")
     print(f"Wrote catalog: {out_dir / 'item_catalog.csv'}")
+    version = report.get("game_version") or {}
+    if version.get("bundle_version") or version.get("steam_build_id"):
+        print(
+            "Game version:",
+            version.get("bundle_version") or "unknown",
+            f"(Steam build {version['steam_build_id']})" if version.get("steam_build_id") else "",
+        )
     print(f"UnityPy mode: {'enabled' if report['unitypy_enabled'] else 'disabled'}")
     if report.get("unitypy_reason"):
         print(f"Reason      : {report['unitypy_reason']}")

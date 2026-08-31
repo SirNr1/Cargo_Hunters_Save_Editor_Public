@@ -6,6 +6,9 @@
 Desktop save editor, interactive database & wiki for the Steam game **Cargo Hunters** (`offline.save`, Steam App ID `4197990`) built with Python and Tkinter.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Game build](https://img.shields.io/badge/tested%20with-Cargo%20Hunters%200.26.38.59-brightgreen.svg)](#)
+
+> **Built for game version 0.26.38.59** (Steam build 24834221, 2026-08-22). A game update can add items or change what the save holds. If your game is newer, run *Refresh Names from Game* once — that alone fixes new items showing as raw IDs. The Help tab and the bundled name report both state the version they belong to.
 
 > **Note on game data:** All item information is datamined directly from the game files. This can include stages or content that exist in the data but are not yet unlocked or released in the game itself.
 

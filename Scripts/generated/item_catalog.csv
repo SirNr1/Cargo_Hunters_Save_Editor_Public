@@ -1594,6 +1594,5 @@ category_id,category_label,subcategory_id,subcategory_label,name,template_id,wid
 37,"",100,"Blueprint","Item blueprint",dbdb1174-3605-474e-82c2-385c18cb2ae7,1,1,3000,0.1,Items_en.m_TableData,high
 37,"",100,"Blueprint","Item blueprint",dd93c2d9-b9c0-4714-b0c2-329b0e2e745e,1,1,1000,0.1,Items_en.m_TableData,high
 37,"",100,"Blueprint","Item blueprint",f5a0bb7d-e999-4a41-baf5-f0eed1ba4880,1,1,1000,0.1,Items_en.m_TableData,high
-,"",,"","",101db923-b828-417d-9103-c0ea7ac65713,,,,,,medium
-,"",,"","",179d4947-5320-4d86-9f4d-f5706c4745fb,,,,,,medium
+,"",,"","",381e554d-0ab7-4111-9e8c-3710bd05d086,,,,,,medium
 ,"",,"",".45 ACP Tutorial ammo",a9c96f62-09d1-4429-96d6-8667009bb757,1,1,,100.0,item_templates.alias_fallback_for_localization_links,high
