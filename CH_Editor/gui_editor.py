@@ -3471,6 +3471,7 @@ class SaveEditorGUI:
         self.skill_max_btn.pack(side="left", padx=8)
 
         self.set_skill_btn = ttk.Button(skills_control_frame, width=LEVEL_CONTROL_WIDTH,
+                                        style="Step.TButton",
                                         command=self._set_selected_skill_level)
         self.set_skill_btn.pack(side="left")
 
