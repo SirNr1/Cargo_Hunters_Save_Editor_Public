@@ -16,6 +16,7 @@ a = Analysis(
         ('Scripts/template_aliases.json', '.'),
         ('CH_Editor/music.wav', '.'),
         ('CH_Editor/hackerman.png', '.'),
+        ('CH_Editor/app_icon.ico', '.'),
     ] + ([('Scripts/generated/template_mapping_report.json', 'generated')] if os.path.exists('Scripts/generated/template_mapping_report.json') else []) + unitypy_datas,
     hiddenimports=['UnityPy', 'extract_template_mapping'] + unitypy_hiddenimports,
     hookspath=[],
@@ -38,6 +39,11 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    # Zwei verschiedene Dinge, die dieselbe Datei brauchen: `icon` setzt das Symbol
+    # der .exe im Explorer und beim Start, und der Eintrag oben in `datas` liefert
+    # dieselbe Datei mit, damit `_set_window_icon` sie zur Laufzeit findet und der
+    # Fensterrahmen nicht bei Tks Feder bleibt. Eines ohne das andere sieht falsch aus.
+    icon='CH_Editor/app_icon.ico',
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
