@@ -6694,15 +6694,34 @@ class SaveEditorGUI:
     def _footprint_for_item(self, item_id: str):
         """(w, h) of an item as it occupies cells, `BaseComponent_rotated` swapping the axes.
 
-        The size stored on the item wins, because it is the game's own record of what the
-        item currently covers - a weapon that has grown with its attachments carries 4x1
-        while its template says 2x1, which is exactly the "shows smaller than it blocks"
-        effect visible in-game. Only an item that carries no size falls back to its template.
-        Measured across a real save: this and the plain template size both give zero
-        overlaps, and MaxSize gives 80.
+        Four steps, in this order:
 
-        The one exception is an item **this editor placed and the game has not looked at yet**,
-        which is covered by `_own_placed_footprint` below.
+        1. **Start at what the save says.** A missing half means "as the template", because the
+           serializer omits what equals the default - not "unknown". Discarding both because one
+           was absent turned an Eliphalet 700 stored at width 5 into a 1x1.
+        2. **Grow it by the fitted parts.** Every attachment that enlarges its host carries a
+           `Resize` in the game data; 132 templates do, and a missing field means no growth.
+        3. **Cap that at `MaxSize`.** That is the size with *every* slot filled, so a weapon
+           with empty slots must not be given it.
+        4. **Never go below step 1.** The save's number is a floor, never the answer.
+
+        **Why both halves of steps 2 and 3 are needed**, read off the screen from the weapon
+        cases on 2026-09-09:
+
+            Saigak-13   2x1 + parts = 6x2, MaxSize 6x2 -> 6x2   in game 6x2, save says 4x1
+            MA17        2x1 + parts = 5x2, MaxSize 6x3 -> 5x2   in game 5x2, save says 3x1
+            SVS         2x1 + parts = 6x4, MaxSize 5x2 -> 5x2   in game 5x2, save says 3x1
+
+        The sum alone is too big for the SVS, `MaxSize` alone too big for the MA17, and the
+        stored size too small for all three. The smaller of the two, floored by the save, fits
+        all six weapons that were read. Modelling the seven cases went from 164 claimed cells
+        to 338 with no overlap appearing.
+
+        A **container** is skipped: `collect_subtree` cannot tell an attached part from a stored
+        one, and a backpack does not grow because something is in it.
+
+        `_own_placed_footprint` still overrides everything, for an item this editor assembled
+        that the game has not seen yet.
         """
         item = self.manager.get_item(item_id) or {}
         data = (item.get("AdditionalData") or {}).get("_data") or {}
@@ -6711,11 +6730,55 @@ class SaveEditorGUI:
         template_id = str(item.get("TemplateId") or "").lower()
         width = data.get("BaseComponent_width")
         height = data.get("BaseComponent_height")
-        if not isinstance(width, int) or not isinstance(height, int):
-            template = self._footprint_for_template(template_id)
+        # **Eine fehlende Zahl heisst "wie die Vorlage", nicht "unbekannt".** Der Serialisierer
+        # laesst Vorgabewerte weg, und beide zu verwerfen, weil eine fehlt, macht aus einer
+        # Waffe ihre Vorlage: eine Eliphalet 700 steht im Save mit Breite 5 und ohne Hoehe und
+        # wurde als 1x1 gerechnet - fuenffach zu schmal. Im Koffer liegt sie sichtbar quer
+        # ueber fuenf Zellen. 39 Gegenstaende eines echten Saves tragen nur eine der beiden
+        # Zahlen; der Fehler faellt in `test_placement_real.py` nicht auf, weil dieselbe
+        # Funktion auch die Nachbarn kleinrechnet und dadurch keine Ueberlappung entsteht.
+        template = self._footprint_for_template(template_id)
+        if not isinstance(width, int):
             if template is None:
                 return None
-            width, height = template
+            width = template[0]
+        if not isinstance(height, int):
+            if template is None:
+                return None
+            height = template[1]
+        # **Was die angebauten Teile daraus machen, gedeckelt durch `MaxSize`.** Das ist die
+        # Regel des Spiels, und sie wurde am 09.09.2026 an den Waffenkoffern belegt, nachdem
+        # die Groessen im Spiel abgelesen worden waren:
+        #
+        #   Saigak-13  Vorlage 2x1 + Teile (4,1) = 6x2, MaxSize 6x2 -> 6x2   im Spiel 6x2
+        #   MA17       Vorlage 2x1 + Teile (3,1) = 5x2, MaxSize 6x3 -> 5x2   im Spiel 5x2
+        #   SVS        Vorlage 2x1 + Teile (4,3) = 6x4, MaxSize 5x2 -> 5x2   im Spiel 5x2
+        #
+        # `MaxSize` ist die Groesse mit voller Bestueckung, die Summe die mit der jetzigen -
+        # keine der beiden allein stimmt, das Kleinere von beiden trifft alle sechs abgelesenen
+        # Waffen. Der eingetragene Wert bleibt Untergrenze: das Spiel fuehrt ihn nicht nach,
+        # dieselbe Saigak steht dort mit 4x1.
+        #
+        # Gemessen: in den sieben Waffenkoffern belegt das 338 Zellen ohne eine einzige
+        # Ueberlappung, gegen 164 mit dem eingetragenen Wert allein. Ueber das ganze Save
+        # 3091 Zellen, ebenfalls ohne Ueberlappung.
+        #
+        # Ein Behaelter ist ausgenommen: `collect_subtree` unterscheidet nicht zwischen
+        # angebaut und eingelegt, und ein Rucksack waechst nicht durch seinen Inhalt.
+        if not self._container_cells_for(item_id):
+            template = self._footprint_for_template(template_id)
+            if template:
+                zuwachs = self._parts_resize_sum(item_id)
+                gewachsen_b = template[0] + zuwachs[0]
+                gewachsen_h = template[1] + zuwachs[1]
+                meta = self.game_item_meta_by_template_id.get(template_id, {})
+                hoechst_b, hoechst_h = meta.get("max_width"), meta.get("max_height")
+                if isinstance(hoechst_b, int):
+                    gewachsen_b = min(gewachsen_b, hoechst_b)
+                if isinstance(hoechst_h, int):
+                    gewachsen_h = min(gewachsen_h, hoechst_h)
+                width, height = max(width, gewachsen_b), max(height, gewachsen_h)
+
         grown = self._own_placed_footprint(item_id)
         if grown is not None:
             width, height = grown
@@ -6878,7 +6941,16 @@ class SaveEditorGUI:
             breite += GROWTH_MARGIN[0]
             hoehe += GROWTH_MARGIN[1]
 
-        return (hoehe, breite) if gedreht else (breite, hoehe)
+        # **In der Orientierung der Vorlage, ohne die aktuelle Drehung.** `find_placement`
+        # probiert ohnehin beide Lagen und meldet zurueck, ob es drehen musste - und dieses
+        # "gedreht" wird als `BaseComponent_rotated` geschrieben. Gaebe man die bereits
+        # gedrehten Maße hinein, waere die Meldung relativ zur alten Drehung und die Flagge
+        # danach falsch herum.
+        #
+        # Gemessen am 09.09.2026 an einer Ramon 1891, die gedreht in einem Reiter lag: der
+        # Editor prueft 3x5, legt sie dann ungedreht ab, wo sie 4x1 belegt - Spalte 3 hat nie
+        # jemand angesehen. Beides ging aus, weil `gedreht` zweimal angewandt wurde.
+        return breite, hoehe
 
     def _container_cells_for(self, container_id: str):
         item = self.manager.get_item(container_id)
@@ -7786,12 +7858,15 @@ class SaveEditorGUI:
         a real save it predicts 139 of 162 grown items exactly and is too large for the rest, so
         it is a ceiling on the growth and not the growth itself.
 
-        That is the right direction for reserving room, and it is why this exists next to
-        `MaxSize`: for 8 of the 53 presets the sum lands **above** the root's own `MaxSize`
-        (LM39, M420, MKP, PRO90 MK1 and MK2, Ronnie B4, SVS twice), and those are exactly the
-        configurations `MaxSize` alone would have left too little room for.
+        **Uncapped on purpose.** For 8 of the 53 presets the sum lands above the root's own
+        `MaxSize` (LM39, M420, MKP, PRO90 MK1 and MK2, Ronnie B4, SVS twice), and saying so is
+        this function's other job: `_preset_outgrows_its_ceiling` is what warns that 17 of the
+        53 configurations reach or pass the standard size. The capping belongs to
+        `_preset_reservation`, because reserving room is a different question from describing
+        what the parts add up to.
         """
-        base = self._footprint_for_template(str(preset.get("root") or ""))
+        wurzel = str(preset.get("root") or "").strip().lower()
+        base = self._footprint_for_template(wurzel)
         if base is None:
             return None
         width, height = base
@@ -7802,6 +7877,7 @@ class SaveEditorGUI:
             if isinstance(grow, dict):
                 width += int(grow.get("width") or 0)
                 height += int(grow.get("height") or 0)
+
         return width, height
 
     def _preset_outgrows_its_ceiling(self, preset: dict) -> bool:
@@ -7886,7 +7962,21 @@ class SaveEditorGUI:
         """
         grown = self._preset_grown_size(preset)
         if grown is not None:
-            return (grown[0] + GROWTH_MARGIN[0], grown[1] + GROWTH_MARGIN[1])
+            # **Gedeckelt durch `MaxSize`**, seit die Groessen am 09.09.2026 im Spiel abgelesen
+            # wurden. Bei 8 der 53 Bausaetze liegt die Teilesumme darueber, und das galt bisher
+            # als Beleg, dass `MaxSize` zu wenig Platz liesse. Ein SVS im Waffenkoffer widerlegt
+            # das: seine Teile summieren sich zu 6x4, sein `MaxSize` nennt 5x2, und er belegt
+            # 5x2. Groesser als mit allen Steckplaetzen belegt kann eine Waffe nicht werden, die
+            # acht hielten also Platz fuer eine Groesse frei, die es nicht gibt. Ueber alle 53
+            # sinken die Reservierungen von 829 auf 790 Zellen.
+            breite, hoehe = grown
+            meta = self.game_item_meta_by_template_id.get(
+                str(preset.get("root") or "").strip().lower(), {})
+            if isinstance(meta.get("max_width"), int):
+                breite = min(breite, meta["max_width"])
+            if isinstance(meta.get("max_height"), int):
+                hoehe = min(hoehe, meta["max_height"])
+            return (breite + GROWTH_MARGIN[0], hoehe + GROWTH_MARGIN[1])
         return self._assembled_reservation(str(preset.get("root") or ""))
 
     def _fill_required_slots(self, item_id: str, _depth: int = 0) -> int:
