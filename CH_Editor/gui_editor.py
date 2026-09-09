@@ -7,7 +7,7 @@ import tkinter as tk
 import webbrowser
 from collections import Counter
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 try:
     from PIL import Image, ImageDraw, ImageTk
@@ -7096,6 +7096,31 @@ class SaveEditorGUI:
         return (self._template_name_for_item_id(target)
                 or t["target_container"])
 
+    #: Untergrenze und Obergrenze der Zielliste, in Zeichenbreiten. Die Obergrenze haelt den
+    #: Dialog unter der Mindestbreite des Hauptfensters von 1140px - bei 13px je Einheit sind
+    #: das 1040px. Was dann noch ueberhaengt, ist ein Vorlagenname und keine Warnung.
+    PLATZ_LISTE_MIN, PLATZ_LISTE_MAX = 54, 80
+
+    def _placement_combo_width(self, labels: list[str]) -> int:
+        """Wie breit die Zielliste sein muss, damit ihr laengster Eintrag hineinpasst.
+
+        **Eine feste Zahl kann hier nicht stimmen.** Mit den urspruenglichen 54 Einheiten -
+        702px auf diesem Schirm - wurde in *allen drei* Sprachen abgeschnitten: englisch um
+        86px, deutsch um 231, russisch um 311. Weg war dabei ausgerechnet das angehaengte
+        "kein Platz", und uebrig blieb eine Zeile, die sich wie ein gueltiges Ziel liest.
+        Gemeldet aus der Nutzung, und zwar an genau dieser Zeile.
+
+        Die Namen kommen aus den Spieldaten und aus drei Sprachen, koennen sich also mit einem
+        Spiel-Update aendern - deshalb gemessen statt gesetzt. Eigene Methode, damit
+        `tests/test_placement_gui.py` das Ergebnis pruefen kann, statt die Formel nachzubauen
+        und sich selbst zu messen.
+        """
+        schrift = tkfont.nametofont("TkDefaultFont")
+        einheit = max(1, schrift.measure("0"))
+        noetig = max((schrift.measure(label) for label in labels), default=0)
+        return max(self.PLATZ_LISTE_MIN,
+                   min(noetig // einheit + 2, self.PLATZ_LISTE_MAX))
+
     def _ask_placement_target(
         self,
         title: str,
@@ -7148,8 +7173,10 @@ class SaveEditorGUI:
         if need:
             ttk.Label(body, text=t["place_size"].format(w=need[0], h=need[1]),
                       style="Hint.TLabel").pack(anchor="w", pady=(0, 6))
-        combo = ttk.Combobox(body, state="readonly", width=54,
-                             values=[label for _cid, label in options])
+        beschriftungen = [label for _cid, label in options]
+        combo = ttk.Combobox(body, state="readonly",
+                             width=self._placement_combo_width(beschriftungen),
+                             values=beschriftungen)
         combo.current(0)
         combo.pack(fill="x")
 
