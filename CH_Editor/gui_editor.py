@@ -1835,7 +1835,7 @@ INFO_MOD_ROWS = 8
 # slots evidently holds room for what could still go in them, and the game answers a spot that is
 # too small by mailing the item. Crude on purpose: it is the honest shape of a rule nobody has
 # read out of the data, and it costs cells in a tab rather than items in a mailbox.
-ASSEMBLED_SLACK = (1, 1)
+GROWTH_MARGIN = (1, 1)
 
 # The change list groups by section and shows this many rows per group before it says how many
 # more there are. A trader stock refresh rewrites some 1400 leaves on its own - measured on two
@@ -6747,7 +6747,7 @@ class SaveEditorGUI:
         on purpose: the 4x2 that started this was a Gaston with no parts at all.
 
         The answer is the largest of everything the data states - the stored size, the parts'
-        `resize` sum, the `MaxSize` ceiling - plus `ASSEMBLED_SLACK`.
+        `resize` sum, the `MaxSize` ceiling - plus `GROWTH_MARGIN`.
         """
         item = self.manager.get_item(item_id) or {}
         meta = self.game_item_meta_by_template_id.get(
@@ -6773,8 +6773,8 @@ class SaveEditorGUI:
                 grown_h += int(resize.get("height") or 0)
         ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
         ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
-        return (max(grown_w, ceiling_w) + ASSEMBLED_SLACK[0],
-                max(grown_h, ceiling_h) + ASSEMBLED_SLACK[1])
+        return (max(grown_w, ceiling_w) + GROWTH_MARGIN[0],
+                max(grown_h, ceiling_h) + GROWTH_MARGIN[1])
 
     def _parts_resize_sum(self, item_id: str) -> tuple[int, int]:
         """Wie viel die angebauten Teile zusammen an Breite und Hoehe hinzufuegen.
@@ -6848,38 +6848,35 @@ class SaveEditorGUI:
         # der Orientierung der Vorlage. Am Ende wird genau einmal getauscht.
         breite, hoehe = (grund[1], grund[0]) if gedreht else grund
 
-        # `MaxSize` ist die Obergrenze, die das Spiel selbst fuer diese Vorlage nennt.
-        if meta.get("is_resizable"):
-            hoechst_b = meta.get("max_width")
-            hoechst_h = meta.get("max_height")
-            if isinstance(hoechst_b, int) and isinstance(hoechst_h, int):
-                breite, hoehe = max(breite, hoechst_b), max(hoehe, hoechst_h)
-
-        # Die Teilesumme erzaehlt vom Wachstum, solange das Spiel es nicht selbst eingetragen
-        # hat - also bei gespeicherter Groesse gleich der Vorlage, und bei gar keiner.
+        # **Die Groesse mit dem, was jetzt dransteckt** - dieselbe Rechnung, die
+        # `_preset_reservation` beim Zusammengebaut-Spawnen anstellt. Vorher stand hier
+        # `MaxSize`, also die Groesse mit *allen* Steckplaetzen belegt; bei einer nur teilweise
+        # bestueckten Waffe ist das zu viel. Gemessen an einem echten Save forderten so alle 43
+        # wachsenden Gegenstaende mehr als noetig, oft die doppelte Flaeche - eine KA74 7x4
+        # statt 6x2. Die Doku von `_preset_reservation` verlangt ausdruecklich, dass die beiden
+        # Wege sich ueber dieselbe Waffe nicht widersprechen; genau das taten sie.
+        #
+        # Die Summe geht ueber den **ganzen** Anbau, nicht nur die direkt angesteckten Teile:
+        # ein Daempfer am Lauf verlaengert die Waffe genauso. Gegen die eingetragenen Groessen
+        # gerechnet lag die Teilbaum-Summe bei 25 gewachsenen Gegenstaenden **kein einziges Mal
+        # darunter**, die Variante mit nur direkten Kindern dagegen sechsmal - und zu wenig zu
+        # reservieren ist der Fall, der im Postfach endet.
         vorlage = self._footprint_for_template(str(item.get("TemplateId") or "").lower())
-        gespeichert = (daten.get("BaseComponent_width"), daten.get("BaseComponent_height"))
-        eingetragen = all(isinstance(v, int) for v in gespeichert)
         gewachsen = False
-        if vorlage and (not eingetragen or gespeichert == vorlage):
+        if vorlage:
             zuwachs = self._parts_resize_sum(item_id)
             if any(zuwachs):
                 gewachsen = True
                 breite = max(breite, vorlage[0] + zuwachs[0])
                 hoehe = max(hoehe, vorlage[1] + zuwachs[1])
 
-        # **`ASSEMBLED_SLACK` genau dort, wo `_keep_out_cells` ihn auch haelt: bei allem, was
-        # wachsen kann.** Im Spiel nachgemessen an einem Neckar SR93, der mit
-        # 4x1 eingetragen ist und den das Spiel mit 5x2 blockt.
-        #
-        # **Nicht an allem, an dem etwas haengt.** Das war am 09.09.2026 kurz eingebaut, weil
-        # ein Bein mit Structure und Hydraulics gedreht in einen Streifen von vier Zellen
-        # passte. Der Gitterausschnitt aus Reiter 2 widerlegt es: das Spiel hat L.Leg auf
-        # Spalte 3, R.Leg auf Spalte 4 und ein MONOLITH auf Spalte 5 gelegt, lueckenlos. Um
-        # Koerperteile haelt es keinen Abstand, und ein Bein bleibt bei seinen 1x4.
+        # `GROWTH_MARGIN` wie ueberall sonst, wo fuer Wachstum reserviert wird - im Spiel
+        # bestaetigt an einem Neckar SR93, den das Spiel eine Zelle weiter blockt, als er
+        # eingetragen ist. Nicht an Gegenstaenden, die nicht wachsen koennen: das Spiel legt
+        # Koerperteile lueckenlos nebeneinander.
         if meta.get("is_resizable") or gewachsen:
-            breite += ASSEMBLED_SLACK[0]
-            hoehe += ASSEMBLED_SLACK[1]
+            breite += GROWTH_MARGIN[0]
+            hoehe += GROWTH_MARGIN[1]
 
         return (hoehe, breite) if gedreht else (breite, hoehe)
 
@@ -6920,7 +6917,7 @@ class SaveEditorGUI:
         stack of ammunition spawned next to an existing weapon ended up in the mailbox.
 
         So the search treats every **resizable** neighbour as covering the most it could: its
-        drawn size or its `MaxSize`, whichever is larger, plus `ASSEMBLED_SLACK`. Ten stacks of
+        drawn size or its `MaxSize`, whichever is larger, plus `GROWTH_MARGIN`. Ten stacks of
         ammunition spawned into a tab that held weapons came back as three placed and seven in
         the mailbox, which is what a margin that is too small looks like.
 
@@ -6972,8 +6969,8 @@ class SaveEditorGUI:
                     and stored != (tw, th)):
                 ceiling_w = ceiling_h = 0
 
-            width = max(footprint[0], ceiling_w) + ASSEMBLED_SLACK[0]
-            height = max(footprint[1], ceiling_h) + ASSEMBLED_SLACK[1]
+            width = max(footprint[0], ceiling_w) + GROWTH_MARGIN[0]
+            height = max(footprint[1], ceiling_h) + GROWTH_MARGIN[1]
             anchor = self.manager.cell_of(child_id)
             margin |= {
                 (anchor[0] + di, anchor[1] + dj)
@@ -7019,7 +7016,7 @@ class SaveEditorGUI:
         list has to say something about the footprint. The first version said it by dropping
         those containers, and that was wrong twice over: it takes away the overview, and it
         hides destinations on the strength of a **reservation** that is itself an upper bound
-        with an open question in it (see `ASSEMBLED_SLACK`). If the reservation is too
+        with an open question in it (see `GROWTH_MARGIN`). If the reservation is too
         cautious, removing the entry turns a guess into a verdict. A label leaves the choice
         where it belongs and still answers the question before the choice is made.
 
@@ -7852,7 +7849,7 @@ class SaveEditorGUI:
         4x1, a Neckar SR93 5x1 against a 1x1 template.
 
         `MaxSize` is above every observed value, so it is a safe ceiling even though it is not
-        the answer - and `ASSEMBLED_SLACK` goes on top, because in play a bare Gaston blocked one
+        the answer - and `GROWTH_MARGIN` goes on top, because in play a bare Gaston blocked one
         cell more than its own ceiling. Nothing false is written into the save; this is only how
         much space the search keeps clear.
         """
@@ -7860,7 +7857,7 @@ class SaveEditorGUI:
             str(template_id or "").strip().lower(), {})
         width, height = meta.get("max_width"), meta.get("max_height")
         if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
-            return width + ASSEMBLED_SLACK[0], height + ASSEMBLED_SLACK[1]
+            return width + GROWTH_MARGIN[0], height + GROWTH_MARGIN[1]
         # One preset root (template 6x2) carries no MaxSize at all. Its own size is then the
         # best statement available.
         return self._footprint_for_template(template_id)
@@ -7878,7 +7875,7 @@ class SaveEditorGUI:
         asked for 6x3 to 7x4 - four to nine times the area. A 1A4M the game stores at 3x1 was
         being given 28 cells.
 
-        **The one cell of `ASSEMBLED_SLACK` stays**, and that is measured too, on the same
+        **The one cell of `GROWTH_MARGIN` stays**, and that is measured too, on the same
         save: a Neckar SR93 stored 4x1 has the game blocking 5x2 around it, exactly one cell
         further on each axis. Dropping it would put the new weapon on a cell its neighbour
         really claims, which is the corner the seven mailed ammunition stacks came from.
@@ -7889,7 +7886,7 @@ class SaveEditorGUI:
         """
         grown = self._preset_grown_size(preset)
         if grown is not None:
-            return (grown[0] + ASSEMBLED_SLACK[0], grown[1] + ASSEMBLED_SLACK[1])
+            return (grown[0] + GROWTH_MARGIN[0], grown[1] + GROWTH_MARGIN[1])
         return self._assembled_reservation(str(preset.get("root") or ""))
 
     def _fill_required_slots(self, item_id: str, _depth: int = 0) -> int:
