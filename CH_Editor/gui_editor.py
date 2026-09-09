@@ -2352,12 +2352,12 @@ class SaveEditorGUI:
             yscrollcommand=mail_scroll.set
         )
         mail_scroll.configure(command=self.mail_tree.yview)
-        self.mail_tree.column("index", width=self._col_w(60), anchor="center")
-        self.mail_tree.column("sender", width=self._col_w(220), anchor="w")
-        self.mail_tree.column("message_ref", width=self._col_w(230), anchor="w")
-        self.mail_tree.column("rewards", width=self._col_w(70), anchor="center")
-        self.mail_tree.column("read", width=self._col_w(70), anchor="center")
-        self.mail_tree.column("mail_id", width=self._col_w(360), anchor="w")
+        self.mail_tree.column("index", width=self._scale_px(60), anchor="center")
+        self.mail_tree.column("sender", width=self._scale_px(220), anchor="w")
+        self.mail_tree.column("message_ref", width=self._scale_px(230), anchor="w")
+        self.mail_tree.column("rewards", width=self._scale_px(70), anchor="center")
+        self.mail_tree.column("read", width=self._scale_px(70), anchor="center")
+        self.mail_tree.column("mail_id", width=self._scale_px(360), anchor="w")
         self.mail_tree.pack(side="left", fill="both", expand=True)
 
         # **Two rows, and that is a measurement rather than taste.** On one row the filters
@@ -2462,18 +2462,18 @@ class SaveEditorGUI:
             yscrollcommand=catalog_scroll.set
         )
         catalog_scroll.configure(command=self.catalog_tree.yview)
-        self.catalog_tree.column("name", width=self._col_w(260), anchor="w")
+        self.catalog_tree.column("name", width=self._scale_px(260), anchor="w")
         # 150, not the 290 a full GUID needs. Value and Weight pushed the eight columns to
         # 1190px against the window's 1100px minimum, so at the smallest size the last column
         # fell off the right edge with no way to scroll to it. This is the column worth
         # shortening: the full id is in the item info window, with a button to copy it.
-        self.catalog_tree.column("template_id", width=self._col_w(150), anchor="w")
-        self.catalog_tree.column("category", width=self._col_w(160), anchor="w")
-        self.catalog_tree.column("subcategory", width=self._col_w(170), anchor="w")
-        self.catalog_tree.column("size", width=self._col_w(70), anchor="center")
-        self.catalog_tree.column("stack", width=self._col_w(80), anchor="center")
-        self.catalog_tree.column("price", width=self._col_w(90), anchor="e")
-        self.catalog_tree.column("mass", width=self._col_w(70), anchor="e")
+        self.catalog_tree.column("template_id", width=self._scale_px(150), anchor="w")
+        self.catalog_tree.column("category", width=self._scale_px(160), anchor="w")
+        self.catalog_tree.column("subcategory", width=self._scale_px(170), anchor="w")
+        self.catalog_tree.column("size", width=self._scale_px(70), anchor="center")
+        self.catalog_tree.column("stack", width=self._scale_px(80), anchor="center")
+        self.catalog_tree.column("price", width=self._scale_px(90), anchor="e")
+        self.catalog_tree.column("mass", width=self._scale_px(70), anchor="e")
         self.catalog_tree.pack(side="left", fill="both", expand=True)
         # The app's accent, the same magenta the Help tab highlights with. Colour alone is
         # not the feature - the "only new" checkbox is - so it never has to be the only way
@@ -2627,9 +2627,6 @@ class SaveEditorGUI:
 
     def _scale_px(self, val: int) -> int:
         return int(round(val * getattr(self, "dpi_scale", 1.0)))
-
-    def _col_w(self, base_width: int) -> int:
-        return self._scale_px(base_width)
 
     def _init_language_flags(self) -> None:
         """Generates crisp, high-DPI scaled flag bitmaps for US, Germany, and Russia."""
@@ -4561,9 +4558,9 @@ class SaveEditorGUI:
         skills_scroll.configure(command=self.skills_tree.yview)
         self.skills_tree.pack(side="left", fill="both", expand=True)
 
-        self.skills_tree.column("id", width=self._col_w(60), anchor="center")
-        self.skills_tree.column("name", width=self._col_w(200), anchor="w")
-        self.skills_tree.column("level", width=self._col_w(80), anchor="center")
+        self.skills_tree.column("id", width=self._scale_px(60), anchor="center")
+        self.skills_tree.column("name", width=self._scale_px(200), anchor="w")
+        self.skills_tree.column("level", width=self._scale_px(80), anchor="center")
 
         self.skills_tree.bind("<<TreeviewSelect>>", self._on_skill_selected)
 
@@ -4621,11 +4618,11 @@ class SaveEditorGUI:
         traders_scroll.configure(command=self.traders_tree.yview)
         self.traders_tree.pack(side="left", fill="both", expand=True)
 
-        self.traders_tree.column("id", width=self._col_w(80), anchor="w")
-        self.traders_tree.column("template_id", width=self._col_w(80), anchor="w")
-        self.traders_tree.column("name", width=self._col_w(180), anchor="w")
-        self.traders_tree.column("trader_level", width=self._col_w(100), anchor="center")
-        self.traders_tree.column("balance", width=self._col_w(150), anchor="e")
+        self.traders_tree.column("id", width=self._scale_px(80), anchor="w")
+        self.traders_tree.column("template_id", width=self._scale_px(80), anchor="w")
+        self.traders_tree.column("name", width=self._scale_px(180), anchor="w")
+        self.traders_tree.column("trader_level", width=self._scale_px(100), anchor="center")
+        self.traders_tree.column("balance", width=self._scale_px(150), anchor="e")
 
         self.traders_tree.configure(displaycolumns=("name", "trader_level", "balance"))
         self.traders_tree.bind("<<TreeviewSelect>>", self._on_trader_selected)
@@ -4691,10 +4688,10 @@ class SaveEditorGUI:
         counters_scroll.configure(command=self.counters_tree.yview)
         self.counters_tree.pack(side="left", fill="both", expand=True)
 
-        self.counters_tree.column("group", width=self._col_w(130), anchor="w")
-        self.counters_tree.column("stat", width=self._col_w(200), anchor="w")
-        self.counters_tree.column("value", width=self._col_w(120), anchor="e")
-        self.counters_tree.column("updated", width=self._col_w(170), anchor="w")
+        self.counters_tree.column("group", width=self._scale_px(130), anchor="w")
+        self.counters_tree.column("stat", width=self._scale_px(200), anchor="w")
+        self.counters_tree.column("value", width=self._scale_px(120), anchor="e")
+        self.counters_tree.column("updated", width=self._scale_px(170), anchor="w")
 
         self.counters_hint = ttk.Label(self.tab_counters, style="Hint.TLabel",
                                        wraplength=self._scale_px(520), justify="left")
@@ -4756,11 +4753,11 @@ class SaveEditorGUI:
         quests_scroll.configure(command=self.quests_tree.yview)
         self.quests_tree.pack(side="left", fill="both", expand=True)
 
-        self.quests_tree.column("#0", width=self._col_w(430), anchor="w", stretch=True)
-        self.quests_tree.column("status", width=self._col_w(110), anchor="w")
-        self.quests_tree.column("flags", width=self._col_w(130), anchor="w")
-        self.quests_tree.column("sender", width=self._col_w(150), anchor="w")
-        self.quests_tree.column("reward", width=self._col_w(190), anchor="w")
+        self.quests_tree.column("#0", width=self._scale_px(430), anchor="w", stretch=True)
+        self.quests_tree.column("status", width=self._scale_px(110), anchor="w")
+        self.quests_tree.column("flags", width=self._scale_px(130), anchor="w")
+        self.quests_tree.column("sender", width=self._scale_px(150), anchor="w")
+        self.quests_tree.column("reward", width=self._scale_px(190), anchor="w")
         self.quests_tree.bind("<<TreeviewSelect>>", self._on_quest_selected)
 
         detail_frame = ttk.Frame(panes)
@@ -6480,12 +6477,12 @@ class SaveEditorGUI:
         )
         scroll.configure(command=self.crafting_tree.yview)
         self.crafting_tree.pack(side="left", fill="both", expand=True)
-        self.crafting_tree.column("#0", width=self._col_w(300), anchor="w", stretch=True)
+        self.crafting_tree.column("#0", width=self._scale_px(300), anchor="w", stretch=True)
         # No "makes" column: all 150 recipes have exactly one output, so the row title already
         # names it and a second column would repeat every row word for word.
-        self.crafting_tree.column("needs", width=self._col_w(520), anchor="w")
-        self.crafting_tree.column("time", width=self._col_w(90), anchor="w")
-        self.crafting_tree.column("state", width=self._col_w(130), anchor="w")
+        self.crafting_tree.column("needs", width=self._scale_px(520), anchor="w")
+        self.crafting_tree.column("time", width=self._scale_px(90), anchor="w")
+        self.crafting_tree.column("state", width=self._scale_px(130), anchor="w")
         self.crafting_tree.bind("<<TreeviewSelect>>", self._on_recipe_selected)
 
         detail_frame = ttk.Frame(panes)
@@ -8080,8 +8077,8 @@ class SaveEditorGUI:
                             height=min(max(len(presets), 3), 10), selectmode="browse")
         tree.heading("#0", text=t["preset_col_variant"])
         tree.heading("parts", text=t["preset_col_parts"])
-        tree.column("#0", width=self._col_w(260), anchor="w")
-        tree.column("parts", width=self._col_w(300), anchor="w")
+        tree.column("#0", width=self._scale_px(260), anchor="w")
+        tree.column("parts", width=self._scale_px(300), anchor="w")
         for index, preset in enumerate(presets):
             parts = [
                 self._template_name_for_template_id(part.get("template_id"))
@@ -9490,9 +9487,9 @@ class SaveEditorGUI:
                                     height=min(max(len(slots), 3), INFO_MOD_ROWS),
                                     selectmode="browse")
                 for column, title, width in (
-                    ("slot", t["attach_col_slot"], self._col_w(200)),
-                    ("fitted", t["attach_col_fitted"], self._col_w(250)),
-                    ("note", "", self._col_w(90)),
+                    ("slot", t["attach_col_slot"], self._scale_px(200)),
+                    ("fitted", t["attach_col_fitted"], self._scale_px(250)),
+                    ("note", "", self._scale_px(90)),
                 ):
                     tree.heading(column, text=title)
                     tree.column(column, width=width, anchor="w")
@@ -9575,9 +9572,9 @@ class SaveEditorGUI:
                     body, columns=("host", "slot", "where"), show="headings",
                     height=min(max(len(hosts), 3), INFO_MOD_ROWS), selectmode="browse")
                 for column, title, width in (
-                    ("host", t["attach_col_host"], self._col_w(200)),
-                    ("slot", t["attach_col_slot"], self._col_w(150)),
-                    ("where", t["attach_col_where"], self._col_w(190)),
+                    ("host", t["attach_col_host"], self._scale_px(200)),
+                    ("slot", t["attach_col_slot"], self._scale_px(150)),
+                    ("where", t["attach_col_where"], self._scale_px(190)),
                 ):
                     host_tree.heading(column, text=title)
                     host_tree.column(column, width=width, anchor="w")
@@ -10023,8 +10020,8 @@ class SaveEditorGUI:
                             selectmode="none")
         tree.heading("#0", text="")
         tree.heading("note", text="")
-        tree.column("#0", width=self._col_w(300), anchor="w")
-        tree.column("note", width=self._col_w(170), anchor="w")
+        tree.column("#0", width=self._scale_px(300), anchor="w")
+        tree.column("note", width=self._scale_px(170), anchor="w")
 
         rows = 0
 
@@ -10144,8 +10141,8 @@ class SaveEditorGUI:
                             height=min(len(hosts), INFO_MOD_ROWS), selectmode="none")
         tree.heading("#0", text="")
         tree.heading("slot", text="")
-        tree.column("#0", width=self._col_w(300), anchor="w")
-        tree.column("slot", width=self._col_w(170), anchor="w")
+        tree.column("#0", width=self._scale_px(300), anchor="w")
+        tree.column("slot", width=self._scale_px(170), anchor="w")
         for host_id, slot_label in hosts:
             tree.insert("", "end",
                         text=self._template_name_for_template_id(host_id) or host_id,
@@ -10723,9 +10720,9 @@ class SaveEditorGUI:
         tree.heading("#0", text=t["diff_col_what"])
         tree.heading("before", text=t["diff_col_before"])
         tree.heading("after", text=t["diff_col_after"])
-        tree.column("#0", width=self._col_w(420), anchor="w", stretch=True)
-        tree.column("before", width=self._col_w(160), anchor="w")
-        tree.column("after", width=self._col_w(160), anchor="w")
+        tree.column("#0", width=self._scale_px(420), anchor="w", stretch=True)
+        tree.column("before", width=self._scale_px(160), anchor="w")
+        tree.column("after", width=self._scale_px(160), anchor="w")
 
         self._fill_diff_tree(tree, diff)
         if diff_is_empty(diff):
@@ -10793,9 +10790,9 @@ class SaveEditorGUI:
         tree.heading("when", text=t["restore_col_when"])
         tree.heading("label", text=t["restore_col_label"])
         tree.heading("size", text=t["restore_col_size"])
-        tree.column("when", width=self._col_w(170), anchor="w")
-        tree.column("label", width=self._col_w(170), anchor="w")
-        tree.column("size", width=self._col_w(100), anchor="e")
+        tree.column("when", width=self._scale_px(170), anchor="w")
+        tree.column("label", width=self._scale_px(170), anchor="w")
+        tree.column("size", width=self._scale_px(100), anchor="e")
 
         rows: dict[str, Path] = {}
         for entry in backups:
