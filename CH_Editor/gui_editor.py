@@ -17,15 +17,29 @@ except ImportError:
 
 from core_utils import (
     BACKUP_KEEP_DEFAULT,
+    CREDITS_TEMPLATE_ID,
     SaveDataManager,
+    build_entries,
     container_cells,
+    container_regions,
+    describe_entry,
     diff_is_empty,
     diff_saves,
     find_placement,
+    item_data,
     list_backups,
+    prune_item_data,
+    repair_item_logic,
     restore_backup,
+    writable_item_data,
 )
-from main_editor import build_entries, describe_entry, repair_item_logic
+
+from help_text import HELP_TEXT_DE, HELP_TEXT_EN, HELP_TEXT_RU
+
+# Welche Liste zu welcher Sprache gehoert. Frueher eine if/elif-Kette in
+# `_populate_help_text`; als Woerterbuch steht die Zuordnung an einer Stelle und der Ruckfall
+# auf Englisch ist derselbe wie bei `TRANSLATIONS`.
+HELP_TEXTE = {"en": HELP_TEXT_EN, "de": HELP_TEXT_DE, "ru": HELP_TEXT_RU}
 
 STEAM_APP_ID = "4197990"
 
@@ -37,6 +51,14 @@ STEAM_APP_ID = "4197990"
 # report - a user can hold a newer game than this editor was tested with, and the help text
 # below says what to do then.
 GAME_BUILD_TESTED = "0.26.38.59"
+
+# Die beiden Preset-Zahlen des getesteten Builds. Sie standen als Prosa an acht Stellen -
+# "53" in beiden Hilfetexten und drei Sprachen, "17 der 53" ebenso - und keine davon wusste
+# etwas von den anderen. Gerechnet wird jetzt aus `presets_meta`; diese Werte sind nur der
+# Rueckfall fuer den Fall, dass noch kein Bericht vorliegt (frischer Klon, nie extrahiert).
+# Dann eine Zahl auszugeben, die es gerade nicht gibt, waere schlechter als die aus dem Build.
+PRESET_COUNT_SHIPPED = 53
+PRESET_OUTGROWN_SHIPPED = 17
 GAME_BUILD_TESTED_STEAM = "24834221"
 GAME_BUILD_TESTED_DATE = "2026-08-22"
 
@@ -170,21 +192,37 @@ def get_config_path() -> Path:
         return Path(__file__).resolve().parent / "config.json"
 
 
-def load_config_lang() -> str:
+def _read_config_key(key: str, default=None):
+    """Ein Schluessel aus der config.json, oder `default`, wenn irgendetwas im Weg ist.
+
+    "Irgendetwas" heisst hier absichtlich alles: keine Datei, kaputtes JSON, kein solcher
+    Schluessel, oben drin steht eine Liste statt eines Objekts. Eine Einstellungsdatei darf
+    den Editor nicht am Starten hindern - was nicht lesbar ist, gilt als nicht gesetzt.
+
+    Ob der gelesene Wert *brauchbar* ist, entscheidet der jeweilige Leser: die Sprache muss in
+    TRANSLATIONS stehen, `backup_keep` eine Zahl >= 0 sein. Das ist je Schluessel verschieden
+    und steht deshalb nicht hier.
+    """
     path = get_config_path()
     if path.exists():
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                lang = data.get("language")
-                if lang in TRANSLATIONS:
-                    return lang
+                return json.load(f).get(key, default)
         except Exception:
             pass
-    return get_system_language()
+    return default
 
 
-def save_config_lang(lang: str) -> None:
+def _write_config_key(key: str, value) -> None:
+    """Ein Schluessel in die config.json, ohne die anderen zu verlieren.
+
+    Deshalb erst lesen, dann den einen Wert setzen, dann alles zurueckschreiben: die Datei
+    haelt Sprache, Sicherungsanzahl, neue Vorlagen und Kategoriefarben nebeneinander, und wer
+    sie einfach ueberschreibt, loescht die drei anderen Einstellungen mit.
+
+    Schlaegt das Schreiben fehl, passiert nichts weiter. Eine nicht gespeicherte Einstellung
+    ist ein Aergernis, ein Absturz beim Sprachwechsel waere einer mehr.
+    """
     path = get_config_path()
     try:
         data = {}
@@ -194,11 +232,20 @@ def save_config_lang(lang: str) -> None:
                     data = json.load(f)
             except Exception:
                 pass
-        data["language"] = lang
+        data[key] = value
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception:
         pass
+
+
+def load_config_lang() -> str:
+    lang = _read_config_key("language")
+    return lang if lang in TRANSLATIONS else get_system_language()
+
+
+def save_config_lang(lang: str) -> None:
+    _write_config_key("language", lang)
 
 
 def _trim_float(value: float) -> str:
@@ -209,33 +256,12 @@ def _trim_float(value: float) -> str:
 
 
 def load_config_backup_keep() -> int:
-    path = get_config_path()
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                keep = json.load(f).get("backup_keep")
-            if isinstance(keep, int) and keep >= 0:
-                return keep
-        except Exception:
-            pass
-    return BACKUP_KEEP_DEFAULT
+    keep = _read_config_key("backup_keep")
+    return keep if isinstance(keep, int) and keep >= 0 else BACKUP_KEEP_DEFAULT
 
 
 def save_config_backup_keep(keep: int) -> None:
-    path = get_config_path()
-    try:
-        data = {}
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                pass
-        data["backup_keep"] = int(keep)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-    except Exception:
-        pass
+    _write_config_key("backup_keep", int(keep))
 
 
 def load_config_new_templates() -> set[str]:
@@ -245,43 +271,25 @@ def load_config_new_templates() -> set[str]:
     user* has not looked at yet, which is not game data and has no business travelling
     into a build. A report copied from another machine therefore arrives unmarked.
     """
-    path = get_config_path()
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                ids = json.load(f).get("new_template_ids")
-            if isinstance(ids, list):
-                return {str(i).strip().lower() for i in ids if str(i).strip()}
-        except Exception:
-            pass
+    ids = _read_config_key("new_template_ids")
+    if isinstance(ids, list):
+        return {str(i).strip().lower() for i in ids if str(i).strip()}
     return set()
 
 
 def save_config_new_templates(ids: set[str]) -> None:
-    path = get_config_path()
-    try:
-        data = {}
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                pass
-        # Lowercased on the way in as well as on the way out. The ids always arrive that way
-        # from the catalog, so this is only for a hand-edited config - but a file whose
-        # contents do not match what the reader compares against is a trap for later.
-        data["new_template_ids"] = sorted({str(i).strip().lower() for i in ids if str(i).strip()})
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-    except Exception:
-        pass
+    # Lowercased on the way in as well as on the way out. The ids always arrive that way
+    # from the catalog, so this is only for a hand-edited config - but a file whose
+    # contents do not match what the reader compares against is a trap for later.
+    _write_config_key("new_template_ids",
+                      sorted({str(i).strip().lower() for i in ids if str(i).strip()}))
 
 
 def newly_added_templates(before: set[str], after: set[str]) -> set[str]:
     """What a refresh added, or nothing at all when the question cannot be answered.
 
     **An empty `before` means there is no baseline, not that everything is new.** On a
-    first run - fresh clone, no report yet - every one of the 1595 templates would
+    first run - fresh clone, no report yet - every one of the ~1600 templates would
     otherwise light up, which says nothing and buries the handful that a game update
     really brings. The same guard covers an extraction that came back with no catalog:
     a run that resolved nothing cannot report what changed.
@@ -292,31 +300,33 @@ def newly_added_templates(before: set[str], after: set[str]) -> set[str]:
 
 
 def load_config_category_colors() -> bool:
-    path = get_config_path()
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return bool(json.load(f).get("category_colors", False))
-        except Exception:
-            pass
-    return False
+    return bool(_read_config_key("category_colors", False))
 
 
 def save_config_category_colors(enabled: bool) -> None:
-    path = get_config_path()
-    try:
-        data = {}
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                pass
-        data["category_colors"] = bool(enabled)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-    except Exception:
-        pass
+    _write_config_key("category_colors", bool(enabled))
+
+
+# --- Die Farben der Oberflaeche ---------------------------------------------------------
+# Acht Werte tragen das ganze Aussehen und standen als Hexzahl an 140 Stellen. Die Namen sind
+# nicht geraten: sie kommen daher, an welchen Optionsnamen jede Farbe wirklich haengt -
+# #1e1e1e siebzehnmal an `background`/`bg`, #3c3c3c siebenmal an `bordercolor`, #252526 an
+# `fieldbackground`, und so fort.
+#
+# Die uebrigen 62 Farben der Datei bleiben Hexzahlen: sie kommen ein- bis viermal vor, meist
+# fuer eine einzelne Sache (das Warnbanner, die Abzeichen-Animation, die Flaggen), und ein
+# Name dafuer erfindet eine Rolle, die es nicht gibt.
+#
+# **Am Aussehen aendert sich nichts.** Belegt, nicht behauptet: die neun README-Ansichten
+# davor und danach sind unterhalb der Titelleiste Pixel fuer Pixel gleich.
+COLOR_BG = "#1e1e1e"             # Fensterhintergrund
+COLOR_PANEL = "#252526"          # Eingabefelder und Flaechen darin
+COLOR_BG_RAISED = "#2d2d2d"      # eine Stufe heller, fuer abgesetzte Flaechen
+COLOR_BORDER = "#3c3c3c"         # Raender
+COLOR_TEXT = "#d4d4d4"           # Schrift auf dem Hintergrund
+COLOR_WHITE = "#ffffff"          # Schrift auf einer eingefaerbten Flaeche
+COLOR_ACCENT = "#3794ff"         # das Blau der Ueberschriften, Pfeile und Verweise
+COLOR_SELECTED = "#0e639c"       # die ausgewaehlte oder aktive Zeile
 
 
 CATEGORY_COLORS: dict[str, str] = {
@@ -740,8 +750,10 @@ TRANSLATIONS = {
         "status_attached": "Fitted {part} into {slot} (not saved yet)",
         "ctx_spawn_preset": "Spawn Assembled...",
         "preset_title": "Assembled item",
-        "preset_none": "The game ships no assembled configuration for this item. Only the 53 "
-                       "firearm presets have one; everything else is spawned as the bare item.",
+        "preset_none": "The game ships no assembled configuration for this item. Only the "
+                       "{total} firearm presets have one; everything else is spawned as "
+                       "the bare item.",
+
         "preset_prompt": "The game ships more than one configuration for this weapon.",
         "preset_col_variant": "Configuration",
         "preset_col_parts": "Parts fitted",
@@ -752,7 +764,8 @@ TRANSLATIONS = {
                            "data says the weapon only grows to {ceiling}. Tested in play: the "
                            "game refuses such an item wherever it is put and delivers it to "
                            "your mailbox in pieces - no item in a real save sits at its own "
-                           "maximum. 17 of the 53 configurations are like this.\n\nSpawn it "
+                           "maximum. {outgrown} of the {total} configurations are like "
+                           "this.\n\nSpawn it "
                            "anyway?",
         "ctx_info": "Item Info",
         "info_title": "Item info",
@@ -1213,7 +1226,7 @@ TRANSLATIONS = {
         "ctx_spawn_preset": "Fertig aufgebaut spawnen...",
         "preset_title": "Fertig aufgebauter Gegenstand",
         "preset_none": "Für diesen Gegenstand liefert das Spiel keine fertige Konfiguration. "
-                       "Nur die 53 Schusswaffen-Presets haben eine; alles andere entsteht als "
+                       "Nur die {total} Schusswaffen-Presets haben eine; alles andere entsteht als "
                        "nackter Gegenstand.",
         "preset_prompt": "Das Spiel liefert für diese Waffe mehr als eine Konfiguration.",
         "preset_col_variant": "Konfiguration",
@@ -1225,7 +1238,7 @@ TRANSLATIONS = {
                            "Spieldaten wächst die Waffe nur bis {ceiling}. Im Spiel getestet: "
                            "das Spiel lehnt so einen Gegenstand überall ab und legt ihn in "
                            "Einzelteilen in dein Postfach — kein Gegenstand in einem echten "
-                           "Spielstand steht auf seinem eigenen Maximum. 17 der 53 "
+                           "Spielstand steht auf seinem eigenen Maximum. {outgrown} der {total} "
                            "Konfigurationen sind so.\n\nTrotzdem spawnen?",
         "ctx_info": "Info zum Gegenstand",
         "info_title": "Gegenstandsinfo",
@@ -1685,7 +1698,7 @@ TRANSLATIONS = {
         "ctx_spawn_preset": "Создать в сборе...",
         "preset_title": "Предмет в сборе",
         "preset_none": "Для этого предмета игра не содержит готовой сборки. Она есть только у "
-                       "53 пресетов огнестрельного оружия; всё остальное создаётся без частей.",
+                       "{total} пресетов огнестрельного оружия; всё остальное создаётся без частей.",
         "preset_prompt": "Игра содержит для этого оружия несколько сборок.",
         "preset_col_variant": "Сборка",
         "preset_col_parts": "Установленные части",
@@ -1696,7 +1709,8 @@ TRANSLATIONS = {
                            "оружие растёт только до {ceiling}. Проверено в игре: игра "
                            "отказывается от такого предмета в любом месте и присылает его в "
                            "почтовый ящик по частям — ни один предмет в реальном сохранении не "
-                           "стоит на своём максимуме. Таких сборок 17 из 53.\n\nВсё равно "
+                           "стоит на своём максимуме. Таких сборок {outgrown} из {total}.\n\n"
+                           "Всё равно "
                            "создать?",
         "ctx_info": "Информация о предмете",
         "info_title": "Информация о предмете",
@@ -1828,15 +1842,6 @@ INFO_MARKER = "▸ "
 # Close button on a 768px screen.
 INFO_MOD_ROWS = 8
 
-# One cell of slack in each direction on top of every size the data states, for a resizable
-# item this editor places. Measured in play on 2026-07-30 and not derivable from any field: a bare
-# Gaston 17 draws 2x1 and **blocks 4x2** - one cell wider than its own 3x2 MaxSize - while the
-# same pistol assembled as an MK3 blocks exactly the 3x2 its parts add up to. A weapon with empty
-# slots evidently holds room for what could still go in them, and the game answers a spot that is
-# too small by mailing the item. Crude on purpose: it is the honest shape of a rule nobody has
-# read out of the data, and it costs cells in a tab rather than items in a mailbox.
-GROWTH_MARGIN = (1, 1)
-
 # The change list groups by section and shows this many rows per group before it says how many
 # more there are. A trader stock refresh rewrites some 1400 leaves on its own - measured on two
 # real saves a day apart - and a flat list of those buries the two changes the user made.
@@ -1936,189 +1941,8 @@ class SaveEditorGUI:
         # starts at its own floor looks broken the first time anything is resized.
         self._center_window(1180, 760)
 
-        # Style Setup (Premium Dark Mode)
-        self.root.configure(bg="#1e1e1e")
-        self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
-        self.style.configure(".", 
-            background="#1e1e1e", 
-            foreground="#d4d4d4",
-            fieldbackground="#252526",
-            troughcolor="#1e1e1e",
-            bordercolor="#3c3c3c",
-            lightcolor="#3c3c3c",
-            darkcolor="#1e1e1e"
-        )
-        
-        self.style.configure("TNotebook", background="#1e1e1e", borderwidth=0)
-        self.style.configure("TNotebook.Tab", 
-            background="#2d2d2d", 
-            foreground="#969696", 
-            padding=[14, 6], 
-            font=("TkDefaultFont", 9, "bold")
-        )
-        self.style.map("TNotebook.Tab", 
-            background=[("selected", "#1e1e1e"), ("active", "#3c3c3c")],
-            foreground=[("selected", "#3794ff"), ("active", "#ffffff")]
-        )
-        
-        self.style.configure("TFrame", background="#1e1e1e")
-        self.style.configure("TLabel", background="#1e1e1e", foreground="#d4d4d4")
-        
-        self.style.configure("TButton", 
-            background="#2d2d2d", 
-            foreground="#d4d4d4", 
-            bordercolor="#3c3c3c", 
-            relief="flat", 
-            padding=[8, 4]
-        )
-        self.style.map("TButton", 
-            background=[("active", "#0e639c"), ("pressed", "#094771")],
-            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")]
-        )
-        
-        self.style.configure("TEntry", 
-            fieldbackground="#252526", 
-            foreground="#ffffff", 
-            insertcolor="#3794ff",
-            bordercolor="#3c3c3c"
-        )
-        
-        self.style.configure("TCombobox", 
-            fieldbackground="#252526", 
-            background="#1e1e1e", 
-            foreground="#ffffff", 
-            arrowcolor="#3794ff",
-            bordercolor="#3c3c3c",
-            arrowsize=max(self._scale_px(14), 14),
-        )
-        self.style.map("TCombobox", 
-            fieldbackground=[("readonly", "#252526"), ("active", "#2d2d2d")],
-            background=[("readonly", "#252526"), ("active", "#2d2d2d")],
-            foreground=[("readonly", "#ffffff"), ("active", "#ffffff")]
-        )
-        self.root.option_add("*TCombobox*Listbox.background", "#252526")
-        self.root.option_add("*TCombobox*Listbox.foreground", "#d4d4d4")
-        self.root.option_add("*TCombobox*Listbox.selectBackground", "#0e639c")
-        self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
-        
-        self.style.configure("TMenubutton",
-            fieldbackground="#252526",
-            background="#252526",
-            foreground="#ffffff",
-            bordercolor="#3c3c3c",
-            arrowcolor="#3794ff",
-            # **`arrowsize` is the triangle's radius here, not its box.** In `clam` a
-            # `TMenubutton` draws an arrow twice this wide, which is why the numbers look
-            # small next to `TScrollbar`, where the same option means the outer box. Copying
-            # one across produced a 56px arrow once.
-            #
-            # Measured on this display at 2.0x: 3.5 gives a 7px radius, so a 14px arrow, and
-            # the button asks for 109px. Every further unit widens the button by 2px - 7
-            # would make it 123px, 14 would make it 151px, as wide as the Music button beside
-            # it. The floor of 3 keeps the triangle visible at 1.0x.
-            arrowsize=max(self._scale_px(3.5), 3),
-            arrowpadding=max(self._scale_px(0.5), 1),
-            width=0,
-            padding=[max(self._scale_px(1.5), 2), max(self._scale_px(2), 2)],
-        )
-        self.style.map("TMenubutton",
-            background=[("pressed", "#0e639c"), ("active", "#2d2d2d")],
-            arrowcolor=[("pressed", "#ffffff"), ("active", "#5aa9ff")],
-        )
+        self._configure_ttk_styles()
 
-        # High-DPI flag icons for the language dropdown
-        self._init_language_flags()
-
-        # Bespoke high-DPI checkbox indicator matching the retro cyberpunk aesthetic
-        self._init_checkbox_style()
-
-        tree_indic_sz = max(self._scale_px(10), 10)
-        tree_indic_margins = [self._scale_px(2), self._scale_px(2), self._scale_px(4), self._scale_px(2)]
-        self.style.configure("Treeview", 
-            background="#252526", 
-            fieldbackground="#252526", 
-            foreground="#d4d4d4",
-            rowheight=max(self._scale_px(24), 24),
-            indicatorsize=tree_indic_sz,
-            indicatormargins=tree_indic_margins,
-            borderwidth=0
-        )
-        self.style.configure("Treeview.Item",
-            indicatorsize=tree_indic_sz,
-            indicatormargins=tree_indic_margins,
-        )
-        self.style.map("Treeview", 
-            background=[("selected", "#094771")],
-            foreground=[("selected", "#ffffff")]
-        )
-        self.style.configure("Heading", 
-            background="#2d2d2d", 
-            foreground="#3794ff", 
-            font=("TkDefaultFont", 10, "bold"),
-            borderwidth=0
-        )
-        
-        self.style.configure("TScrollbar", 
-            troughcolor="#1e1e1e", 
-            background="#2d2d2d", 
-            arrowcolor="#3794ff",
-            bordercolor="#3c3c3c",
-            width=max(self._scale_px(16), 16),
-            arrowsize=max(self._scale_px(14), 14),
-        )
-        self.style.map("TScrollbar",
-            background=[("pressed", "#0e639c"), ("active", "#3c3c3c")],
-            arrowcolor=[("pressed", "#ffffff"), ("active", "#5aa9ff")],
-        )
-        
-        # The level controls on the Skills and Traders tabs: a readout with its own arrows
-        # next to a MAX button, sized to match the plain button beside them. The paddings
-        # below are tuned so all three render the same height - measured, not guessed.
-        self.style.configure("Level.TSpinbox",
-            fieldbackground="#252526",
-            foreground="#3794ff",
-            insertcolor="#3794ff",
-            arrowsize=max(self._scale_px(13), 13),
-            arrowcolor="#3794ff",
-            bordercolor="#3c3c3c",
-            padding=[2, 4]
-        )
-        # Same font family as a plain button so that a width in characters means the same
-        # number of pixels on both; only the weight and the colour differ.
-        self.style.configure("Step.TButton",
-            background="#2d2d2d",
-            foreground="#3794ff",
-            font=("TkDefaultFont", 9, "bold"),
-            relief="flat",
-            padding=[8, 5]
-        )
-        self.style.map("Step.TButton",
-            background=[("active", "#0e639c"), ("pressed", "#094771")],
-            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")]
-        )
-
-        # A value the editor refuses to write. Red field, not a popup: the character fields
-        # are typed into and a dialog per keystroke would be unusable.
-        self.style.configure("Invalid.TEntry",
-            fieldbackground="#3a1d1d",
-            foreground="#ff8a8a",
-            insertcolor="#ff8a8a",
-            bordercolor="#c05050"
-        )
-
-        # Explanatory text in dialogs: dimmed, on the same background as everything else.
-        self.style.configure("Hint.TLabel", background="#1e1e1e", foreground="#9a9a9a")
-        # The item info window's two headings. Bigger and brighter than the body, so the
-        # sections read as sections without needing rules between them.
-        self.style.configure("InfoTitle.TLabel", background="#1e1e1e", foreground="#e8e8e8",
-                             font=("Segoe UI", 13, "bold"))
-        self.style.configure("InfoSection.TLabel", background="#1e1e1e",
-                             foreground="#c8c8c8", font=("Segoe UI", 10, "bold"))
-        self.style.configure("Status.TLabel",
-            foreground="#969696"
-        )
 
         self.status_var = tk.StringVar(value=f"Save: {self.save_path}")
         self.scope_var = tk.StringVar()
@@ -2146,23 +1970,82 @@ class SaveEditorGUI:
         self._start_music()
 
     def _build_layout(self) -> None:
+        """Builds the whole window: header, the eight notebook pages, the status bar.
+
+        The eight tab builders now stand in one list, which makes the one surprising thing
+        about them readable: **they do not run in tab order.** Help, Hackerman, Quests,
+        Crafting and Raw JSON are built before Inventory, Mailbox and Catalog, exactly as
+        they were - the three at the end were written inline here while the five had
+        methods already. Nothing depends on it, but changing it would move every Tk widget
+        path in the window, so it stays.
+
+        Three things have to stay at the end, in this order: the Apply/Discard pairs can
+        only be collected once every tab that has one exists, `_refresh_pending_buttons`
+        reads those lists, and `_update_ui_language` is what puts the first text on all of
+        it - every widget above is created without a label.
+
+        One line changed rather than moved: the three tabs that were built inline here
+        named their page as `self.tab_inventory` / `_mailbox` / `_catalog`, and their
+        builders take it as `parent` instead, the way the five older ones already did.
+        """
+        self._build_header()
+        self._build_notebook()
+
+        self._build_help_tab(self.tab_help)
+        self._build_char_tab(self.tab_char)
+        self._build_quests_tab(self.tab_quests)
+        self._build_crafting_tab(self.tab_crafting)
+        self._build_raw_json_tab(self.tab_raw_json)
+        self._build_inventory_tab(self.tab_inventory)
+        self._build_mailbox_tab(self.tab_mailbox)
+        self._build_catalog_tab(self.tab_catalog)
+
+        self._build_status_bar()
+
+        # Every tab that can stage an edit gets its own Apply/Discard pair (all but Help);
+        # these lists keep their enabled state and labels in sync.
+        self.apply_buttons = [
+            self.apply_button,
+            self.cat_apply_button,
+            self.mail_apply_button,
+            self.char_apply_button,
+        ]
+        self.discard_buttons = [
+            self.discard_button,
+            self.cat_discard_button,
+            self.mail_discard_button,
+            self.char_discard_button,
+        ]
+
+        self._refresh_pending_buttons()
+        self._animate_badge()
+        self._update_ui_language()
+
+    def _build_header(self) -> None:
+        """The strip above the notebook: title, subtitle, avatar, badge and two buttons.
+
+        Its own method because it is the only part of the window outside the notebook and
+        the status bar, and because it holds the one widget that may fail to appear - the
+        avatar is loaded from a file that a stripped build need not have, so everything
+        after it is packed on the right and lines up either way.
+        """
         # Header Title
-        header_frame = tk.Frame(self.root, bg="#1e1e1e")
+        header_frame = tk.Frame(self.root, bg=COLOR_BG)
         header_frame.pack(fill="x", padx=8, pady=(8, 2))
-        
+
         self.title_label = tk.Label(
-            header_frame, 
+            header_frame,
             font=("TkDefaultFont", 12, "bold"),
-            fg="#3794ff",
-            bg="#1e1e1e"
+            fg=COLOR_ACCENT,
+            bg=COLOR_BG
         )
         self.title_label.pack(side="left")
-        
+
         self.subtitle_label = tk.Label(
-            header_frame, 
+            header_frame,
             font=("TkDefaultFont", 9, "italic"),
             fg="#969696",
-            bg="#1e1e1e"
+            bg=COLOR_BG
         )
         self.subtitle_label.pack(side="left", padx=10)
 
@@ -2171,7 +2054,7 @@ class SaveEditorGUI:
         if image_path.exists():
             try:
                 self.hackerman_img = tk.PhotoImage(file=str(image_path))
-                img_label = tk.Label(header_frame, image=self.hackerman_img, bg="#1e1e1e")
+                img_label = tk.Label(header_frame, image=self.hackerman_img, bg=COLOR_BG)
                 img_label.pack(side="right", padx=(5, 10))
             except Exception as e:
                 print(f"Could not load image: {e}")
@@ -2182,7 +2065,7 @@ class SaveEditorGUI:
             text="[ HACKERMAN: I'm hacking you back in time! ]",
             font=("Consolas", 10, "bold"),
             fg="#ff007f",
-            bg="#1e1e1e"
+            bg=COLOR_BG
         )
         self.badge_label.pack(side="right", padx=(10, 5))
 
@@ -2202,6 +2085,15 @@ class SaveEditorGUI:
         )
         self.reload_btn.pack(side="right", padx=(0, 5))
 
+    def _build_notebook(self) -> None:
+        """The notebook and its eight pages, created empty.
+
+        Separate from the builders that fill them because this is where the **tab order**
+        is decided, and it is not the order of the frames above it: Catalog is added
+        second although its frame is created third. `_update_ui_language` names its
+        captions by frame rather than by index, so the two can differ without breaking -
+        which is exactly why the difference needs a place where it is visible.
+        """
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, padx=8, pady=(8, 0))
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -2224,13 +2116,27 @@ class SaveEditorGUI:
         self.notebook.add(self.tab_raw_json)
         self.notebook.add(self.tab_help)
 
-        self._build_help_tab(self.tab_help)
-        self._build_char_tab(self.tab_char)
-        self._build_quests_tab(self.tab_quests)
-        self._build_crafting_tab(self.tab_crafting)
-        self._build_raw_json_tab(self.tab_raw_json)
+    def _build_inventory_tab(self, parent: ttk.Frame) -> None:
+        """The Inventory tab, in the same three parts every tab here has: a toolbar, a
+        tree, and the menu that acts on the tree.
 
-        toolbar = ttk.Frame(self.tab_inventory)
+        It takes its page as an argument like the five tab builders that already existed,
+        so all eight now read the same way from `_build_layout`. The menu takes none - it
+        hangs off `self.root`, not off this page.
+        """
+        self._build_inventory_toolbar(parent)
+        self._build_inventory_tree(parent)
+        self._build_item_context_menu()
+
+    def _build_inventory_toolbar(self, parent: ttk.Frame) -> None:
+        """The inventory toolbar: scope, search, the colour switch, Apply and Discard.
+
+        Its own block because the pack order is the layout: everything is
+        `pack(side=...)`, so the two buttons on the right are the ones that get cut when
+        a translation runs long - which is why they are packed before nothing else and
+        why the toolbar is measured at the window's minimum width.
+        """
+        toolbar = ttk.Frame(parent)
         toolbar.pack(fill="x", padx=4, pady=4)
 
         self.scope_lbl = ttk.Label(toolbar)
@@ -2269,7 +2175,15 @@ class SaveEditorGUI:
         )
         self.apply_button.pack(side="right")
 
-        tree_wrap = ttk.Frame(self.tab_inventory)
+    def _build_inventory_tree(self, parent: ttk.Frame) -> None:
+        """The item tree and every key that acts on it.
+
+        Kept as one block because that is the list of keyboard shortcuts scoped to the
+        tree: each is bound twice, lower and upper case, since Tk sees a different keysym
+        with Caps Lock on. The scope is the point - these fire on the tree and nowhere
+        else, so typing in a search field never deletes an item.
+        """
+        tree_wrap = ttk.Frame(parent)
         tree_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
         tree_scroll = ttk.Scrollbar(tree_wrap, orient="vertical")
@@ -2293,13 +2207,21 @@ class SaveEditorGUI:
         tree_scroll.configure(command=self.tree.yview)
         self._apply_category_color_tags(self.tree)
 
+    def _build_item_context_menu(self) -> None:
+        """The inventory tree's right-click menu, eleven entries in a fixed order.
+
+        A method of its own precisely because that order is a contract: the entries carry
+        no labels here - `_update_ui_language` writes them **by index**, separator
+        included - so adding a command anywhere but at the end moves a label onto the
+        wrong action, and the wrong one deletes things. Three test files pin the shape.
+        """
         self.context_menu = tk.Menu(
-            self.root, 
-            tearoff=0, 
-            bg="#252526", 
-            fg="#d4d4d4", 
-            activebackground="#0e639c", 
-            activeforeground="#ffffff"
+            self.root,
+            tearoff=0,
+            bg=COLOR_PANEL,
+            fg=COLOR_TEXT,
+            activebackground=COLOR_SELECTED,
+            activeforeground=COLOR_WHITE
         )
         # Each action twice: the plain entry does the obvious thing without asking, the
         # "..." one opens a dialog. Keeping both means the common case stays one click.
@@ -2319,7 +2241,14 @@ class SaveEditorGUI:
         self.context_menu.add_separator()
         self.context_menu.add_command(command=self._delete_selected_items, accelerator="Del")
 
-        mailbox_toolbar = ttk.Frame(self.tab_mailbox)
+    def _build_mailbox_tab(self, parent: ttk.Frame) -> None:
+        """The Mailbox tab: a toolbar with the letter count, and a six-column list.
+
+        The only one of the eight with no menu and no search, so it stays a single method
+        rather than being split the way Inventory and Catalog are - the toolbar and the
+        list are the whole tab.
+        """
+        mailbox_toolbar = ttk.Frame(parent)
         mailbox_toolbar.pack(fill="x", padx=4, pady=4)
         self.mail_delete_btn = ttk.Button(
             mailbox_toolbar, command=self._delete_selected_mail
@@ -2338,7 +2267,7 @@ class SaveEditorGUI:
         )
         self.mail_apply_button.pack(side="right")
 
-        mailbox_wrap = ttk.Frame(self.tab_mailbox)
+        mailbox_wrap = ttk.Frame(parent)
         mailbox_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
         mail_scroll = ttk.Scrollbar(mailbox_wrap, orient="vertical")
@@ -2360,6 +2289,25 @@ class SaveEditorGUI:
         self.mail_tree.column("mail_id", width=self._scale_px(360), anchor="w")
         self.mail_tree.pack(side="left", fill="both", expand=True)
 
+    def _build_catalog_tab(self, parent: ttk.Frame) -> None:
+        """The Game Items tab, in the same three parts as the Inventory tab.
+
+        The toolbar is two rows rather than one, which is the one thing this tab does
+        differently and the reason the toolbars have a method to themselves.
+        """
+        self._build_catalog_toolbars(parent)
+        self._build_catalog_tree(parent)
+        self._build_catalog_context_menu()
+
+    def _build_catalog_toolbars(self, parent: ttk.Frame) -> None:
+        """Both catalog toolbar rows, built as one block because the split between them
+        **is** the decision this code records - see the measurement below.
+
+        Note that the two rows are not filled in order: Apply and Discard belong to the
+        first row and are created last, after everything on the second, so they end up on
+        the right of the top row. Splitting this into a method per row would put that
+        detail on a seam.
+        """
         # **Two rows, and that is a measurement rather than taste.** On one row the filters
         # plus Apply/Discard ask for 1155px in English, 1262 in German and 1276 in Russian,
         # against the 1076 a 1100px-wide window leaves - so German and Russian were clipping
@@ -2370,9 +2318,9 @@ class SaveEditorGUI:
         # Splitting by kind rather than evenly: the two dropdowns are the widest things in
         # here (160px each) and the search is what people use most, so it gets its own row
         # with room to spare. Worst case after the split is 845px, in Russian.
-        catalog_toolbar = ttk.Frame(self.tab_catalog)
+        catalog_toolbar = ttk.Frame(parent)
         catalog_toolbar.pack(fill="x", padx=4, pady=(4, 0))
-        catalog_toolbar2 = ttk.Frame(self.tab_catalog)
+        catalog_toolbar2 = ttk.Frame(parent)
         catalog_toolbar2.pack(fill="x", padx=4, pady=(2, 4))
         self.cat_scope_lbl = ttk.Label(catalog_toolbar)
         self.cat_scope_lbl.pack(side="left", padx=(0, 6))
@@ -2416,7 +2364,7 @@ class SaveEditorGUI:
             command=self._refresh_catalog_tree,
         )
         self.cat_search_btn.pack(side="left")
-        # A colour alone would mean scrolling 1595 rows to find three dozen. The checkbox
+        # A colour alone would mean scrolling ~1600 rows to find three dozen. The checkbox
         # is what makes the marking answer a question instead of decorating a list; its
         # label carries the count, so the number is readable without ticking it.
         self.cat_only_new_cb = ttk.Checkbutton(
@@ -2444,9 +2392,18 @@ class SaveEditorGUI:
         )
         self.cat_apply_button.pack(side="right")
 
-        catalog_wrap = ttk.Frame(self.tab_catalog)
+    def _build_catalog_tree(self, parent: ttk.Frame) -> None:
+        """The catalog list: eight columns, measured against the minimum window width.
+
+        Its own block because the widths are that measurement and have to be read
+        together - they add up to what fits, which is why the template id is cut to 150px
+        instead of the 290 a full GUID needs. The two tag setups at the end are why a row
+        can be coloured at all: the magenta for a template a game update brought, and the
+        category colours the checkbox on the toolbar switches.
+        """
+        catalog_wrap = ttk.Frame(parent)
         catalog_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-        
+
         catalog_scroll = ttk.Scrollbar(
             catalog_wrap,
             orient="vertical"
@@ -2482,24 +2439,41 @@ class SaveEditorGUI:
         self._apply_category_color_tags(self.catalog_tree)
         self.catalog_tree.bind("<Button-3>", self._on_catalog_right_click)
 
+    def _build_catalog_context_menu(self) -> None:
+        """The catalog tree's right-click menu, four entries.
+
+        Apart for the same reason as the item menu: it hangs off `self.root` rather than
+        off the tab, and its labels are written by index later, so the order is a contract
+        the tests pin. Both catalog actions live here rather than on the toolbar because
+        their translated labels clipped at the window's minimum width.
+        """
         self.catalog_menu = tk.Menu(
             self.root,
             tearoff=0,
-            bg="#252526",
-            fg="#d4d4d4",
-            activebackground="#0e639c",
-            activeforeground="#ffffff"
+            bg=COLOR_PANEL,
+            fg=COLOR_TEXT,
+            activebackground=COLOR_SELECTED,
+            activeforeground=COLOR_WHITE
         )
         self.catalog_menu.add_command(command=self._add_selected_catalog_item_to_inventory)
         self.catalog_menu.add_command(command=self._spawn_preset_for_selected_catalog_row)
         self.catalog_menu.add_command(command=self._offer_selected_catalog_item_at_trader)
         self.catalog_menu.add_command(command=self._show_info_for_selected_catalog_row)
 
+    def _build_status_bar(self) -> None:
+        """The bottom strip: the three app-wide settings on the right, the status text on
+        the left.
+
+        One block because the packing order is what puts them there: language, mute,
+        retention and Restore are packed `side="right"` in that sequence, so each new one
+        lands to the left of the last, and the status label is packed last with
+        `expand=True` to take whatever is left. They sit here rather than on a tab toolbar
+        because the German and Russian labels already crowd those at the minimum width.
+        """
         status_bar_frame = ttk.Frame(self.root)
         status_bar_frame.pack(fill="x", padx=8, pady=(0, 8))
 
         # Language Selector dropdown menu next to the mute button (packed first to preserve right-side placement)
-        self.lang_var = tk.StringVar(value=self.current_lang)
         self.lang_btn = ttk.Menubutton(
             status_bar_frame,
             direction="below",
@@ -2509,10 +2483,10 @@ class SaveEditorGUI:
         self.lang_menu = tk.Menu(
             self.lang_btn,
             tearoff=0,
-            bg="#252526",
-            fg="#ffffff",
-            activebackground="#0e639c",
-            activeforeground="#ffffff",
+            bg=COLOR_PANEL,
+            fg=COLOR_WHITE,
+            activebackground=COLOR_SELECTED,
+            activeforeground=COLOR_WHITE,
             bd=1,
             relief="solid",
             font=("TkDefaultFont", 9),
@@ -2579,43 +2553,6 @@ class SaveEditorGUI:
                                relief="flat", style="Status.TLabel", width=1)
         status_bar.pack(side="left", fill="x", expand=True)
 
-        self.lang_map = {
-            "en": "en",
-            "de": "de",
-            "ru": "ru",
-            "US": "en",
-            "DE": "de",
-            "RU": "ru",
-            "English": "en",
-            "Deutsch": "de",
-            "Русский": "ru",
-            "🇺🇸": "en",
-            "🇩🇪": "de",
-            "🇷🇺": "ru",
-            "🇬🇧": "en",
-        }
-        self.lang_map_rev = {"en": "US", "de": "DE", "ru": "RU"}
-        self.lang_var.set(self.current_lang)
-
-        # Every tab that can stage an edit gets its own Apply/Discard pair (all but Help);
-        # these lists keep their enabled state and labels in sync.
-        self.apply_buttons = [
-            self.apply_button,
-            self.cat_apply_button,
-            self.mail_apply_button,
-            self.char_apply_button,
-        ]
-        self.discard_buttons = [
-            self.discard_button,
-            self.cat_discard_button,
-            self.mail_discard_button,
-            self.char_discard_button,
-        ]
-
-        self._refresh_pending_buttons()
-        self._animate_badge()
-        self._update_ui_language()
-
     def _get_dpi_scale(self) -> float:
         try:
             dpi = self.root.winfo_fpixels("1i")
@@ -2635,23 +2572,19 @@ class SaveEditorGUI:
         h = max(int(round(14 * scale)), 14)
 
         if HAS_PIL:
-            def make_de() -> tk.PhotoImage:
-                im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-                d = ImageDraw.Draw(im)
-                h3 = h / 3.0
-                d.rectangle([0, 0, w, int(round(h3))], fill="#111111")
-                d.rectangle([0, int(round(h3)), w, int(round(2 * h3))], fill="#dd0000")
-                d.rectangle([0, int(round(2 * h3)), w, h], fill="#ffce00")
-                d.rectangle([0, 0, w - 1, h - 1], outline="#555555", width=1)
-                return ImageTk.PhotoImage(im, master=self.root)
+            def make_bands(top: str, mid: str, bot: str) -> tk.PhotoImage:
+                """Eine Flagge aus drei waagerechten Streifen - Deutschland und Russland.
 
-            def make_ru() -> tk.PhotoImage:
+                Stand zweimal nebeneinander, Wort fuer Wort gleich bis auf die drei Farben.
+                Die Ersatzfassung ohne PIL weiter unten war laengst parametrisiert; hier war
+                es nur nicht nachgezogen worden.
+                """
                 im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                 d = ImageDraw.Draw(im)
                 h3 = h / 3.0
-                d.rectangle([0, 0, w, int(round(h3))], fill="#ffffff")
-                d.rectangle([0, int(round(h3)), w, int(round(2 * h3))], fill="#0039a6")
-                d.rectangle([0, int(round(2 * h3)), w, h], fill="#d52b1e")
+                d.rectangle([0, 0, w, int(round(h3))], fill=top)
+                d.rectangle([0, int(round(h3)), w, int(round(2 * h3))], fill=mid)
+                d.rectangle([0, int(round(2 * h3)), w, h], fill=bot)
                 d.rectangle([0, 0, w - 1, h - 1], outline="#555555", width=1)
                 return ImageTk.PhotoImage(im, master=self.root)
 
@@ -2661,7 +2594,7 @@ class SaveEditorGUI:
                 for i in range(13):
                     y0 = int(round(i * h / 13.0))
                     y1 = int(round((i + 1) * h / 13.0))
-                    col = "#b22234" if i % 2 == 0 else "#ffffff"
+                    col = "#b22234" if i % 2 == 0 else COLOR_WHITE
                     d.rectangle([0, y0, w, y1], fill=col)
                 cw = int(round(w * 0.44))
                 ch = int(round(7.0 * h / 13.0))
@@ -2671,16 +2604,16 @@ class SaveEditorGUI:
                         sx = int(round((c + 0.8) * cw / 4.6))
                         sy = int(round((r + 0.8) * ch / 3.6))
                         if scale >= 1.8:
-                            d.rectangle([sx, sy, sx + 1, sy + 1], fill="#ffffff")
+                            d.rectangle([sx, sy, sx + 1, sy + 1], fill=COLOR_WHITE)
                         else:
-                            d.point((sx, sy), fill="#ffffff")
+                            d.point((sx, sy), fill=COLOR_WHITE)
                 d.rectangle([0, 0, w - 1, h - 1], outline="#555555", width=1)
                 return ImageTk.PhotoImage(im, master=self.root)
 
             self.flags = {
                 "en": make_us(),
-                "de": make_de(),
-                "ru": make_ru(),
+                "de": make_bands("#111111", "#dd0000", "#ffce00"),
+                "ru": make_bands(COLOR_WHITE, "#0039a6", "#d52b1e"),
             }
         else:
             def make_fallback(color_top: str, color_mid: str, color_bot: str) -> tk.PhotoImage:
@@ -2696,7 +2629,7 @@ class SaveEditorGUI:
                 for i in range(7):
                     y0 = i * h // 7
                     y1 = (i + 1) * h // 7
-                    col = "#b22234" if i % 2 == 0 else "#ffffff"
+                    col = "#b22234" if i % 2 == 0 else COLOR_WHITE
                     img.put(col, to=(0, y0, w, y1))
                 cw = w * 4 // 10
                 ch = h * 4 // 7
@@ -2706,7 +2639,7 @@ class SaveEditorGUI:
             self.flags = {
                 "en": make_fallback_us(),
                 "de": make_fallback("#111111", "#dd0000", "#ffce00"),
-                "ru": make_fallback("#ffffff", "#0039a6", "#d52b1e"),
+                "ru": make_fallback(COLOR_WHITE, "#0039a6", "#d52b1e"),
             }
 
     def _init_checkbox_style(self) -> None:
@@ -2746,19 +2679,19 @@ class SaveEditorGUI:
                 return ImageTk.PhotoImage(im, master=self.root)
             else:
                 img = tk.PhotoImage(master=self.root, width=total_w, height=total_h)
-                img.put("#1e1e1e", to=(0, 0, total_w, total_h))
+                img.put(COLOR_BG, to=(0, 0, total_w, total_h))
                 img.put(border_color, to=(0, 0, box_size, box_size))
                 img.put(bg_color, to=(1, 1, box_size - 1, box_size - 1))
-                img.put("#1e1e1e", to=(0, 0, 1, 1))
-                img.put("#1e1e1e", to=(box_size - 1, 0, box_size, 1))
-                img.put("#1e1e1e", to=(0, box_size - 1, 1, box_size))
-                img.put("#1e1e1e", to=(box_size - 1, box_size - 1, box_size, box_size))
+                img.put(COLOR_BG, to=(0, 0, 1, 1))
+                img.put(COLOR_BG, to=(box_size - 1, 0, box_size, 1))
+                img.put(COLOR_BG, to=(0, box_size - 1, 1, box_size))
+                img.put(COLOR_BG, to=(box_size - 1, box_size - 1, box_size, box_size))
                 if check:
                     p1 = (int(round(box_size * 0.26)), int(round(box_size * 0.50)))
                     p2 = (int(round(box_size * 0.44)), int(round(box_size * 0.72)))
                     p3 = (int(round(box_size * 0.76)), int(round(box_size * 0.26)))
                     thick = max(1, int(round(1.5 * scale)))
-                    check_col = "#707070" if disabled else "#ffffff"
+                    check_col = "#707070" if disabled else COLOR_WHITE
 
                     def draw_line(x0: int, y0: int, x1: int, y1: int) -> None:
                         steps = max(abs(x1 - x0), abs(y1 - y0)) * 3
@@ -2776,10 +2709,10 @@ class SaveEditorGUI:
 
         self._checkbox_images = {
             "unchecked": make_indicator_image("#252528", "#4e4e52"),
-            "unchecked_hover": make_indicator_image("#2d2d32", "#3794ff"),
-            "checked": make_indicator_image("#0e639c", "#3794ff", check=True),
+            "unchecked_hover": make_indicator_image("#2d2d32", COLOR_ACCENT),
+            "checked": make_indicator_image(COLOR_SELECTED, COLOR_ACCENT, check=True),
             "checked_hover": make_indicator_image("#1177bb", "#5aa9ff", check=True),
-            "disabled": make_indicator_image("#1e1e1e", "#383838", disabled=True),
+            "disabled": make_indicator_image(COLOR_BG, "#383838", disabled=True),
         }
 
         try:
@@ -2812,14 +2745,210 @@ class SaveEditorGUI:
         )
         self.style.configure(
             "TCheckbutton",
-            background="#1e1e1e",
-            foreground="#d4d4d4",
+            background=COLOR_BG,
+            foreground=COLOR_TEXT,
             padding=[max(self._scale_px(4), 4), max(self._scale_px(3), 3)],
         )
         self.style.map(
             "TCheckbutton",
-            foreground=[("disabled", "#6a6a6a"), ("active", "#ffffff")],
-            background=[("active", "#1e1e1e")],
+            foreground=[("disabled", "#6a6a6a"), ("active", COLOR_WHITE)],
+            background=[("active", COLOR_BG)],
+        )
+
+    def _configure_ttk_styles(self) -> None:
+        """Das ganze Aussehen: Farben, Schriften, Raender fuer jedes ttk-Element.
+
+        Stand als 183 Zeilen mitten in `__init__`, zwischen der Fenstergroesse und den
+        Tk-Variablen. Nichts davon liest oder schreibt etwas ausser `self.style` und
+        `self.root` - keine Closure, keine Reihenfolge, die nach aussen wirkt -, und genau
+        deshalb ist es der eine Block dieser Datei, den man ohne Risiko herausnehmen kann.
+
+        Woertlich verschoben: der Koerper ist Zeile fuer Zeile derselbe wie vorher, samt der
+        Kommentare, die einzelne Messungen festhalten. Wer hier etwas aendert, aendert das
+        Aussehen - und das ist eine Entscheidung des Nutzers, keine Nebenwirkung.
+        """
+        # Style Setup (Premium Dark Mode)
+        self.root.configure(bg=COLOR_BG)
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        
+        self.style.configure(".", 
+            background=COLOR_BG, 
+            foreground=COLOR_TEXT,
+            fieldbackground=COLOR_PANEL,
+            troughcolor=COLOR_BG,
+            bordercolor=COLOR_BORDER,
+            lightcolor=COLOR_BORDER,
+            darkcolor=COLOR_BG
+        )
+        
+        self.style.configure("TNotebook", background=COLOR_BG, borderwidth=0)
+        self.style.configure("TNotebook.Tab", 
+            background=COLOR_BG_RAISED, 
+            foreground="#969696", 
+            padding=[14, 6], 
+            font=("TkDefaultFont", 9, "bold")
+        )
+        self.style.map("TNotebook.Tab", 
+            background=[("selected", COLOR_BG), ("active", COLOR_BORDER)],
+            foreground=[("selected", COLOR_ACCENT), ("active", COLOR_WHITE)]
+        )
+        
+        self.style.configure("TFrame", background=COLOR_BG)
+        self.style.configure("TLabel", background=COLOR_BG, foreground=COLOR_TEXT)
+        
+        self.style.configure("TButton", 
+            background=COLOR_BG_RAISED, 
+            foreground=COLOR_TEXT, 
+            bordercolor=COLOR_BORDER, 
+            relief="flat", 
+            padding=[8, 4]
+        )
+        self.style.map("TButton", 
+            background=[("active", COLOR_SELECTED), ("pressed", "#094771")],
+            foreground=[("active", COLOR_WHITE), ("pressed", COLOR_WHITE)]
+        )
+        
+        self.style.configure("TEntry", 
+            fieldbackground=COLOR_PANEL, 
+            foreground=COLOR_WHITE, 
+            insertcolor=COLOR_ACCENT,
+            bordercolor=COLOR_BORDER
+        )
+        
+        self.style.configure("TCombobox", 
+            fieldbackground=COLOR_PANEL, 
+            background=COLOR_BG, 
+            foreground=COLOR_WHITE, 
+            arrowcolor=COLOR_ACCENT,
+            bordercolor=COLOR_BORDER,
+            arrowsize=max(self._scale_px(14), 14),
+        )
+        self.style.map("TCombobox", 
+            fieldbackground=[("readonly", COLOR_PANEL), ("active", COLOR_BG_RAISED)],
+            background=[("readonly", COLOR_PANEL), ("active", COLOR_BG_RAISED)],
+            foreground=[("readonly", COLOR_WHITE), ("active", COLOR_WHITE)]
+        )
+        self.root.option_add("*TCombobox*Listbox.background", COLOR_PANEL)
+        self.root.option_add("*TCombobox*Listbox.foreground", COLOR_TEXT)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", COLOR_SELECTED)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", COLOR_WHITE)
+        
+        self.style.configure("TMenubutton",
+            fieldbackground=COLOR_PANEL,
+            background=COLOR_PANEL,
+            foreground=COLOR_WHITE,
+            bordercolor=COLOR_BORDER,
+            arrowcolor=COLOR_ACCENT,
+            # **`arrowsize` is the triangle's radius here, not its box.** In `clam` a
+            # `TMenubutton` draws an arrow twice this wide, which is why the numbers look
+            # small next to `TScrollbar`, where the same option means the outer box. Copying
+            # one across produced a 56px arrow once.
+            #
+            # Measured on this display at 2.0x: 3.5 gives a 7px radius, so a 14px arrow, and
+            # the button asks for 109px. Every further unit widens the button by 2px - 7
+            # would make it 123px, 14 would make it 151px, as wide as the Music button beside
+            # it. The floor of 3 keeps the triangle visible at 1.0x.
+            arrowsize=max(self._scale_px(3.5), 3),
+            arrowpadding=max(self._scale_px(0.5), 1),
+            width=0,
+            padding=[max(self._scale_px(1.5), 2), max(self._scale_px(2), 2)],
+        )
+        self.style.map("TMenubutton",
+            background=[("pressed", COLOR_SELECTED), ("active", COLOR_BG_RAISED)],
+            arrowcolor=[("pressed", COLOR_WHITE), ("active", "#5aa9ff")],
+        )
+
+        # High-DPI flag icons for the language dropdown
+        self._init_language_flags()
+
+        # Bespoke high-DPI checkbox indicator matching the retro cyberpunk aesthetic
+        self._init_checkbox_style()
+
+        tree_indic_sz = max(self._scale_px(10), 10)
+        tree_indic_margins = [self._scale_px(2), self._scale_px(2), self._scale_px(4), self._scale_px(2)]
+        self.style.configure("Treeview", 
+            background=COLOR_PANEL, 
+            fieldbackground=COLOR_PANEL, 
+            foreground=COLOR_TEXT,
+            rowheight=max(self._scale_px(24), 24),
+            indicatorsize=tree_indic_sz,
+            indicatormargins=tree_indic_margins,
+            borderwidth=0
+        )
+        self.style.configure("Treeview.Item",
+            indicatorsize=tree_indic_sz,
+            indicatormargins=tree_indic_margins,
+        )
+        self.style.map("Treeview", 
+            background=[("selected", "#094771")],
+            foreground=[("selected", COLOR_WHITE)]
+        )
+        self.style.configure("Heading", 
+            background=COLOR_BG_RAISED, 
+            foreground=COLOR_ACCENT, 
+            font=("TkDefaultFont", 10, "bold"),
+            borderwidth=0
+        )
+        
+        self.style.configure("TScrollbar", 
+            troughcolor=COLOR_BG, 
+            background=COLOR_BG_RAISED, 
+            arrowcolor=COLOR_ACCENT,
+            bordercolor=COLOR_BORDER,
+            width=max(self._scale_px(16), 16),
+            arrowsize=max(self._scale_px(14), 14),
+        )
+        self.style.map("TScrollbar",
+            background=[("pressed", COLOR_SELECTED), ("active", COLOR_BORDER)],
+            arrowcolor=[("pressed", COLOR_WHITE), ("active", "#5aa9ff")],
+        )
+        
+        # The level controls on the Skills and Traders tabs: a readout with its own arrows
+        # next to a MAX button, sized to match the plain button beside them. The paddings
+        # below are tuned so all three render the same height - measured, not guessed.
+        self.style.configure("Level.TSpinbox",
+            fieldbackground=COLOR_PANEL,
+            foreground=COLOR_ACCENT,
+            insertcolor=COLOR_ACCENT,
+            arrowsize=max(self._scale_px(13), 13),
+            arrowcolor=COLOR_ACCENT,
+            bordercolor=COLOR_BORDER,
+            padding=[2, 4]
+        )
+        # Same font family as a plain button so that a width in characters means the same
+        # number of pixels on both; only the weight and the colour differ.
+        self.style.configure("Step.TButton",
+            background=COLOR_BG_RAISED,
+            foreground=COLOR_ACCENT,
+            font=("TkDefaultFont", 9, "bold"),
+            relief="flat",
+            padding=[8, 5]
+        )
+        self.style.map("Step.TButton",
+            background=[("active", COLOR_SELECTED), ("pressed", "#094771")],
+            foreground=[("active", COLOR_WHITE), ("pressed", COLOR_WHITE)]
+        )
+
+        # A value the editor refuses to write. Red field, not a popup: the character fields
+        # are typed into and a dialog per keystroke would be unusable.
+        self.style.configure("Invalid.TEntry",
+            fieldbackground="#3a1d1d",
+            foreground="#ff8a8a",
+            insertcolor="#ff8a8a",
+            bordercolor="#c05050"
+        )
+
+        # Explanatory text in dialogs: dimmed, on the same background as everything else.
+        self.style.configure("Hint.TLabel", background=COLOR_BG, foreground="#9a9a9a")
+        # The item info window's two headings. Bigger and brighter than the body, so the
+        # sections read as sections without needing rules between them.
+        self.style.configure("InfoTitle.TLabel", background=COLOR_BG, foreground="#e8e8e8",
+                             font=("Segoe UI", 13, "bold"))
+        self.style.configure("InfoSection.TLabel", background=COLOR_BG,
+                             foreground="#c8c8c8", font=("Segoe UI", 10, "bold"))
+        self.style.configure("Status.TLabel",
+            foreground="#969696"
         )
 
     def _center_window(self, width: int = 1180, height: int = 760) -> None:
@@ -2839,6 +2968,29 @@ class SaveEditorGUI:
         y = max(0, (screen_height - h - self._scale_px(40)) // 2)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
+    def _new_dialog(self, title: str) -> tk.Toplevel:
+        """Ein leeres Dialogfenster im Aussehen des Editors.
+
+        Die vier Zeilen standen vor jedem der elf Dialoge einzeln, in drei Schreibweisen -
+        mal `transient` vor `configure`, mal andersherum, einmal mit einem Kommentar
+        dazwischen. Wer den zwoelften baut, schreibt sonst eine vierte.
+
+        `transient` haengt das Fenster an das Hauptfenster: es bekommt keinen eigenen Eintrag
+        in der Taskleiste und verschwindet mit ihm. Und ohne `configure(bg=...)` behaelt das
+        Toplevel den Systemhintergrund, sodass die dunklen Beschriftungen auf einem hellen
+        Rechteck sitzen.
+
+        **Was hier bewusst nicht steht, ist das Ende.** Die Dialoge schliessen in zwei
+        Familien - sechs zentrieren ueber `_center_toplevel` auf dem Bildschirm, fuenf ueber
+        `_center_over_root` auf dem Hauptfenster - und das ist ein sichtbarer Unterschied,
+        keine Wiederholung, die man still zusammenlegen darf.
+        """
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.transient(self.root)
+        win.configure(bg=COLOR_BG)
+        return win
+
     def _center_toplevel(self, win: tk.Toplevel) -> None:
         """Centers a dialog on screen at its natural size. Call this only once the contents
         are packed - the size is taken from the finished layout."""
@@ -2850,7 +3002,7 @@ class SaveEditorGUI:
         win.geometry(f"{width}x{height}+{x}+{y}")
 
     def _animate_badge(self) -> None:
-        colors = ["#ff007f", "#3794ff", "#00f0ff", "#a020f0", "#39ff14"]
+        colors = ["#ff007f", COLOR_ACCENT, "#00f0ff", "#a020f0", "#39ff14"]
         if not hasattr(self, 'badge_color_idx'):
             self.badge_color_idx = 0
 
@@ -2861,19 +3013,50 @@ class SaveEditorGUI:
         # firing after the root is gone dies with "invalid command name".
         self._badge_after_id = self.root.after(400, self._animate_badge)
 
-    def _get_system_language(self) -> str:
-        return get_system_language()
+    def _populate_help_text(self) -> None:
+        """Fuellt den Hilfereiter mit dem Text der aktuellen Sprache.
+
+        Zweimal gebraucht - beim Aufbau des Reiters und bei jedem Sprachwechsel - und stand
+        deshalb zweimal da, fast Zeile fuer Zeile gleich. Fast: die Aufbaustelle raeumte den
+        Textbereich nicht vor dem Fuellen, weil er da noch leer ist, und holte die Sprache
+        ueber einen `hasattr`-Rueckfall auf die Systemsprache.
+
+        **Dieser Rueckfall war unerreichbar.** `__init__` setzt `self.current_lang` drei Zeilen
+        vor `_build_layout`, und `_build_help_tab` wird von nirgends sonst gerufen. Er ist mit
+        dieser Zusammenlegung weg, und mit ihm der einzige Aufrufer der Methode
+        `_get_system_language`; die Funktion `get_system_language` auf Modulebene, die sie nur
+        weiterreichte, bleibt und wird von `load_config_lang` gebraucht.
+
+        Leeren vor dem Fuellen schadet beim Aufbau nicht: `delete` auf einem leeren Textfeld
+        tut nichts, und `state="normal"` ist der Zustand, in dem es dort ohnehin steht.
+        """
+        self.help_text_area.configure(state="normal")
+        self.help_text_area.delete("1.0", "end")
+        help_text = HELP_TEXTE.get(self.current_lang, HELP_TEXT_EN)
+        # `str.replace` statt `.format`: die Hilfetexte enthalten geschweifte Klammern in
+        # Beispielen, und `.format` wuerde daran scheitern oder sie stillschweigend fressen.
+        gesamt, ueber = self._preset_counts()
+        einsetzen = {
+            "{preset_total}": str(gesamt),
+            "{preset_outgrown}": str(ueber),
+            # Der getestete Build stand frueher als f-String im Text selbst. Seit die Texte
+            # ein eigenes Modul ohne Importe sind, kommt er hier hinein - derselbe Weg wie
+            # die Preset-Zahlen, und einer weniger, an den man denken muss.
+            "{game_build}": GAME_BUILD_TESTED,
+            "{game_build_steam}": GAME_BUILD_TESTED_STEAM,
+            "{game_build_date}": GAME_BUILD_TESTED_DATE,
+        }
+        for text, tag in help_text:
+            for platzhalter, wert in einsetzen.items():
+                text = text.replace(platzhalter, wert)
+            self.help_text_area.insert("end", text, tag)
+        self.help_text_area.configure(state="disabled")
 
     def _set_language(self, new_lang: str) -> None:
         if new_lang in TRANSLATIONS and new_lang != self.current_lang:
             self.current_lang = new_lang
             save_config_lang(new_lang)
             self._update_ui_language()
-
-    def _on_language_changed(self, event=None) -> None:
-        selected = self.lang_var.get()
-        new_lang = self.lang_map.get(selected, selected)
-        self._set_language(new_lang)
 
     def _on_backup_keep_changed(self) -> None:
         """Stores the new retention limit. Deliberately does not delete anything yet -
@@ -2912,14 +3095,71 @@ class SaveEditorGUI:
         self._apply_category_color_tags()
 
     def _update_ui_language(self) -> None:
+        """Relabels the whole window in `self.current_lang`, in a fixed order.
+
+        The author's numbered blocks are the cut: 1-8 and 13 are methods below, in the
+        order they had. The order is not cosmetic. Three of the blocks do not relabel
+        widgets at all but **rebuild trees** - quests, crafting and the counters list -
+        because the group, module and status names live inside the rows, so relabelling
+        the headings alone leaves the rows in the old language. And block 5 deliberately
+        does *not* refresh the subcategory chooser, because block 11 below ends in it.
+
+        Blocks 9 to 12 stay here: each is already a single call or the four-line status
+        line, and wrapping those in a method of their own would only hide the sequence.
+        `t` is passed to every block instead of each one looking it up again - one lookup,
+        one language, and the moved lines read exactly as they did.
+        """
         t = TRANSLATIONS[self.current_lang]
-        
+
+        self._relabel_header(t)
+        self._relabel_notebook_tabs(t)
+        self._relabel_inventory_tab(t)
+        self._relabel_mailbox_tab(t)
+        self._relabel_catalog_tab(t)
+        self._relabel_quests_tab(t)
+        self._relabel_crafting_tab(t)
+        self._relabel_catalog_columns(t)
+        self._relabel_hackerman_tab(t)
+        self._relabel_help_and_options(t)
+        self._relabel_json_tab(t)
+
+        # 9. Mute Button Text
+        self._label_mute_button()
+
+        # 10. Load scope options with the current selection kept
+        self._load_scope_options()
+
+        # 11. Update catalog category combobox
+        self._refresh_catalog_filters()
+
+        # 12. Refresh current status line
+        if hasattr(self, "last_status_raw"):
+            self._set_status(self.last_status_raw)
+        else:
+            self._set_status("status_welcome")
+
+        self._relabel_language_button()
+
+    def _relabel_header(self, t: dict[str, str]) -> None:
+        """Block 1: the four widgets above the notebook.
+
+        Its own method because the header is the one strip that belongs to no tab - it
+        keeps the title and the two "the data underneath moved on" buttons, which are the
+        only widgets outside the notebook that carry text.
+        """
         # 1. Header Frame
         self.title_label.configure(text=t["title"])
         self.subtitle_label.configure(text=t["active_session"])
         self.refresh_btn.configure(text=t["btn_refresh"])
         self.reload_btn.configure(text=t["btn_reload"])
-        
+
+    def _relabel_notebook_tabs(self, t: dict[str, str]) -> None:
+        """Block 2: the eight tab captions.
+
+        Stands alone because it is the list of tabs, in tab order: a new tab is missing
+        from the window's language the moment it is missing from these eight lines, and
+        that is easier to see against nothing else.
+        """
         # 2. Main Notebook Tabs
         self.notebook.tab(self.tab_inventory, text=t["tab_inventory"])
         self.notebook.tab(self.tab_mailbox, text=t["tab_mailbox"])
@@ -2929,7 +3169,16 @@ class SaveEditorGUI:
         self.notebook.tab(self.tab_char, text=t["tab_hackerman"])
         self.notebook.tab(self.tab_raw_json, text=t["tab_raw_json"])
         self.notebook.tab(self.tab_help, text=t["tab_help"])
-        
+
+    def _relabel_inventory_tab(self, t: dict[str, str]) -> None:
+        """Block 3: the inventory toolbar, every Apply/Discard pair, and the item menu.
+
+        The three belong together because two of them are not the inventory tab's alone:
+        the Apply/Discard loops cover the pairs on Game Items, Mailbox and Hackerman as
+        well, and the menu below them is relabelled **by position**, separator included.
+        Splitting the menu off would leave those indices somewhere that does not say what
+        they are indices into.
+        """
         # 3. Inventory Tab
         self.scope_lbl.configure(text=t["lbl_scope"])
         self.search_lbl.configure(text=t["lbl_search"])
@@ -2939,7 +3188,7 @@ class SaveEditorGUI:
             button.configure(text=t["btn_apply"])
         for button in self.discard_buttons:
             button.configure(text=t["btn_discard"])
-        
+
         # Update context menu items. The indices are positional, so they move whenever an
         # entry is inserted above them.
         self.context_menu.entryconfigure(0, label=t["ctx_repair"])
@@ -2953,10 +3202,16 @@ class SaveEditorGUI:
         self.context_menu.entryconfigure(8, label=t["ctx_info"])
         # Index 9 is the separator.
         self.context_menu.entryconfigure(10, label=t["ctx_delete"])
-        
+
+    def _relabel_mailbox_tab(self, t: dict[str, str]) -> None:
+        """Block 4: the mailbox button and its six column headings.
+
+        One tab, one method - the headings are the tab's only other text, and a column
+        added to the tree is a heading missing here.
+        """
         # 4. Mailbox Tab
         self.mail_delete_btn.configure(text=t["btn_delete_mail"])
-        
+
         # Mailbox Table Headings
         self.mail_tree.heading("index", text=t["col_mail_index"])
         self.mail_tree.heading("sender", text=t["col_mail_sender"])
@@ -2964,11 +3219,24 @@ class SaveEditorGUI:
         self.mail_tree.heading("rewards", text=t["col_mail_rewards"])
         self.mail_tree.heading("read", text=t["col_mail_read"])
         self.mail_tree.heading("mail_id", text=t["col_mail_id"])
-        
+
+    def _relabel_catalog_tab(self, t: dict[str, str]) -> None:
+        """Block 5: the three search toolbars and the catalog's own right-click menu.
+
+        It is one block although the Quests and Crafting search boxes are not on this tab:
+        all three were built from the catalog's, share `lbl_search` and `btn_search`, and
+        the author kept them in one place for exactly that reason. The catalog menu is
+        relabelled by position like the item menu.
+
+        What it deliberately does **not** do is refresh the subcategory chooser - see the
+        comment below, and block 11 in `_update_ui_language`, which ends in it.
+        """
         # 5. Catalog Tab
         self.cat_scope_lbl.configure(text=t["lbl_category"])
         self.cat_subscope_lbl.configure(text=t["lbl_subcategory"])
-        self._refresh_subcategory_filter()
+        # Nicht hier auffrischen: Punkt 11 weiter unten ruft `_refresh_catalog_filters`, und
+        # das endet selbst mit `_refresh_subcategory_filter`. Zwischen den beiden Stellen
+        # zeichnet nichts, der Waehler wurde also nur zweimal fuer denselben Wechsel gebaut.
         self.cat_search_lbl.configure(text=t["lbl_search"])
         self.cat_search_btn.configure(text=t["btn_search"])
         self._relabel_only_new()
@@ -2982,6 +3250,14 @@ class SaveEditorGUI:
         self.catalog_menu.entryconfigure(2, label=t["ctx_offer_at_trader"])
         self.catalog_menu.entryconfigure(3, label=t["ctx_info"])
 
+    def _relabel_quests_tab(self, t: dict[str, str]) -> None:
+        """Block 5b: five headings **and** a full rebuild of the rows.
+
+        Kept as its own block because of that last line: the group and status names sit
+        inside the rows, so this is one of the three places where switching language is
+        not relabelling but redrawing. Dropping `_refresh_quests_tree` leaves the tab
+        rendering the previous language.
+        """
         # 5b. Quests Tab. The group and status names sit inside the tree rows, so
         # relabelling the widgets is not enough - the rows have to be rebuilt.
         self.quests_tree.heading("#0", text=t["tab_quests"])
@@ -2991,6 +3267,13 @@ class SaveEditorGUI:
         self.quests_tree.heading("reward", text=t["col_quest_reward"])
         self._refresh_quests_tree()
 
+    def _relabel_crafting_tab(self, t: dict[str, str]) -> None:
+        """Block 5c: four headings and the same rebuild, for the same reason.
+
+        Separate from the Quests block although the shape is identical - the two trees are
+        rebuilt by different methods over different data, and a shared one would have to
+        take both as arguments to say nothing more than these two lines do.
+        """
         # 5c. Crafting Tab. Same rule as the Quests tab: the module and level names live in
         # the rows, so relabelling the headings alone leaves them in the old language.
         self.crafting_tree.heading("#0", text=t["craft_col_recipe"])
@@ -2999,6 +3282,14 @@ class SaveEditorGUI:
         self.crafting_tree.heading("state", text=t["craft_col_state"])
         self._refresh_crafting_tree()
 
+    def _relabel_catalog_columns(self, t: dict[str, str]) -> None:
+        """The catalog tree's eight column headings.
+
+        The one block the author left unnumbered, and it sits **after** 5b and 5c rather
+        than with block 5 - which is why it is a method of its own instead of being folded
+        into `_relabel_catalog_tab`: the call order is the contract here, so the seam stays
+        where it was.
+        """
         # Catalog Table Headings
         self.catalog_tree.heading("name", text=t["col_cat_name"])
         self.catalog_tree.heading("template_id", text=t["col_cat_template_id"])
@@ -3008,7 +3299,17 @@ class SaveEditorGUI:
         self.catalog_tree.heading("stack", text=t["col_cat_stack"])
         self.catalog_tree.heading("price", text=t["col_cat_price"])
         self.catalog_tree.heading("mass", text=t["col_cat_mass"])
-        
+
+    def _relabel_hackerman_tab(self, t: dict[str, str]) -> None:
+        """Block 6: the whole Hackerman tab - warning, profile, cheats, and the three
+        panes of its subnotebook with their controls.
+
+        It is one method because it is one tab and the author numbered it as one block.
+        The subnotebook is the reason not to cut it further: its pages are addressed by
+        index (`right_nb.tab(0..2)`), the counters page is relabelled before the two next
+        to it, and its list is **rebuilt** rather than relabelled - the third of the three
+        rebuild sites, for the same reason as Quests and Crafting.
+        """
         # 6. Hackerman Tab Warning Frame
         self.warning_title.configure(text=t["lbl_warn_title"])
         self.warning_desc.configure(text=t["lbl_warn_desc"])
@@ -3018,7 +3319,7 @@ class SaveEditorGUI:
         self.nickname_lbl.configure(text=t["lbl_nickname"])
         self.level_lbl.configure(text=t["lbl_level"])
         self.xp_lbl.configure(text=t["lbl_xp"])
-        
+
         # Cheats Frame
         self.cheats_lf.configure(text=t["lf_cheats"])
         self.cheat_repair_all_btn.configure(text=t["btn_cheat_repair"])
@@ -3026,7 +3327,7 @@ class SaveEditorGUI:
         self.cheat_fill_stacks_btn.configure(text=t["btn_cheat_stacks"])
         self.cheat_max_skills_btn.configure(text=t["btn_cheat_max"])
         self.cheat_fill_trader_btn.configure(text=t["btn_cheat_fill"])
-        
+
         # Skills/Traders/Counters Subnotebook Tabs
         self.right_nb.tab(2, text=t["tab_counters"])
         self.counters_tree.heading("group", text=t["col_counter_group"])
@@ -3039,52 +3340,59 @@ class SaveEditorGUI:
         self.skill_points_lbl.configure(text=t["lbl_skill_points"])
         self.right_nb.tab(0, text=t["tab_skills"])
         self.right_nb.tab(1, text=t["tab_trader_balances"])
-        
+
         # Skills Control
         self.skill_level_lbl.configure(text=t["lbl_selected_skill"])
         self.set_skill_btn.configure(text=t["btn_set_skill"])
         self.skill_max_btn.configure(text=t["btn_level_max"])
         self.trader_max_btn.configure(text=t["btn_level_max"])
-        
+
         # Skills Table Headings
         self.skills_tree.heading("id", text=t["col_skill_id"])
         self.skills_tree.heading("name", text=t["col_skill_name"])
         self.skills_tree.heading("level", text=t["col_skill_level"])
-        
+
         # Traders Table Headings
         self.traders_tree.heading("id", text=t["col_trader_instance_id"])
         self.traders_tree.heading("template_id", text=t["col_trader_type_id"])
         self.traders_tree.heading("name", text=t["col_trader_name"])
         self.traders_tree.heading("trader_level", text=t["col_trader_level"])
         self.traders_tree.heading("balance", text=t["col_trader_balance"])
-        
+
         # Traders Control
         self.trader_level_lbl.configure(text=t["lbl_selected_trader"])
         self.trader_balance_lbl.configure(text=t["lbl_balance"])
         self.set_trader_btn.configure(text=t["btn_set_trader"])
-        
+
+    def _relabel_help_and_options(self, t: dict[str, str]) -> None:
+        """Block 7: the Help text, plus the four controls that were left under its heading.
+
+        The block's comment names only the first line. The four below it live elsewhere -
+        the retention label and the Restore button in the status bar, the category-colour
+        checkbox on the inventory toolbar and its twin on the catalog toolbar - and are
+        kept here rather than moved, because the block boundary is what this refactoring
+        preserves; the call order is the contract, the comment is not.
+
+        The Help text is rebuilt, not relabelled: it is a whole document per language.
+        """
         # 7. Help Tab - Re-populate the Help text box
-        self.help_text_area.configure(state="normal")
-        self.help_text_area.delete("1.0", "end")
-        
-        # Load localized help texts
-        if self.current_lang == "de":
-            help_text = self.help_text_de
-        elif self.current_lang == "ru":
-            help_text = self.help_text_ru
-        else:
-            help_text = self.help_text_en
-            
-        for text, tag in help_text:
-            self.help_text_area.insert("end", text, tag)
-        self.help_text_area.configure(state="disabled")
-        
+        self._populate_help_text()
+
         self.backup_keep_label.configure(text=t["backups_keep_label"])
         self.restore_button.configure(text=t["btn_restore_backup"])
         self.category_colors_cb.configure(text=t["cb_category_colors"])
         if hasattr(self, "cat_category_colors_cb"):
             self.cat_category_colors_cb.configure(text=t["cb_category_colors"])
 
+    def _relabel_json_tab(self, t: dict[str, str]) -> None:
+        """Block 8: the Raw JSON toolbar, all of it behind one `hasattr` guard.
+
+        Its own method because it is the only block that may have nothing to do: the tab
+        is built lazily, so every widget here can be absent. Two more conditions inside
+        say the same thing in smaller: the Copy button keeps its "copied" text while its
+        timer runs, and the "no matches" label is only re-stated while a query with no
+        hits is still standing.
+        """
         # 8. Raw JSON Tab controls
         if hasattr(self, "json_search_lbl"):
             self.json_search_lbl.configure(text=t["lbl_search"])
@@ -3097,24 +3405,14 @@ class SaveEditorGUI:
             if getattr(self, "_last_json_query", "") and not self._json_matches:
                 self.json_match_lbl.configure(text=t["lbl_no_matches"], foreground="#e06c75")
 
-        # 9. Mute Button Text
-        if hasattr(self, "music_muted") and self.music_muted:
-            self.mute_button.configure(text=t["btn_unmute"])
-        else:
-            self.mute_button.configure(text=t["btn_mute"])
-            
-        # 10. Load scope options with the current selection kept
-        self._load_scope_options()
-        
-        # 11. Update catalog category combobox
-        self._refresh_catalog_filters()
-        
-        # 12. Refresh current status line
-        if hasattr(self, "last_status_raw"):
-            self._set_status(self.last_status_raw)
-        else:
-            self._set_status("status_welcome")
+    def _relabel_language_button(self) -> None:
+        """Block 13: the flag and the two-letter code on the language selector.
 
+        The only block that takes no `t`: it names the language rather than speaking it,
+        so the codes are the same in all three and stay a literal here instead of three
+        entries in the translation tables. Guarded because the flags are loaded from files
+        that may be missing.
+        """
         # 13. Update Language Selector dropdown
         lang_names = {"en": "US", "de": "DE", "ru": "RU"}
         if hasattr(self, "lang_btn") and hasattr(self, "flags"):
@@ -3124,8 +3422,6 @@ class SaveEditorGUI:
                 text=f" {lang_names.get(self.current_lang, 'US')}",
                 compound="left",
             )
-        if hasattr(self, "lang_var"):
-            self.lang_var.set(self.current_lang)
 
     def _build_raw_json_tab(self, parent: ttk.Frame) -> None:
         self._json_dirty = True
@@ -3185,11 +3481,11 @@ class SaveEditorGUI:
         self.json_text = tk.Text(
             text_frame,
             wrap="none",
-            bg="#1e1e1e",
-            fg="#d4d4d4",
-            insertbackground="#3794ff",
+            bg=COLOR_BG,
+            fg=COLOR_TEXT,
+            insertbackground=COLOR_ACCENT,
             selectbackground="#264f78",
-            selectforeground="#ffffff",
+            selectforeground=COLOR_WHITE,
             font=(font_family, 10),
             padx=8,
             pady=8,
@@ -3203,8 +3499,8 @@ class SaveEditorGUI:
         v_scroll.configure(command=self.json_text.yview)
         self.json_h_scroll.configure(command=self.json_text.xview)
 
-        self.json_text.tag_configure("search_hit", background="#3e4451", foreground="#ffffff")
-        self.json_text.tag_configure("search_active", background="#528bff", foreground="#ffffff")
+        self.json_text.tag_configure("search_hit", background="#3e4451", foreground=COLOR_WHITE)
+        self.json_text.tag_configure("search_active", background="#528bff", foreground=COLOR_WHITE)
         self.json_text.bind("<Control-a>", self._on_json_select_all)
         self.json_text.bind("<Control-A>", self._on_json_select_all)
 
@@ -3427,9 +3723,9 @@ class SaveEditorGUI:
         self.help_text_area = tk.Text(
             wrap_frame,
             wrap="word",
-            bg="#252526",
-            fg="#d4d4d4",
-            insertbackground="#3794ff",
+            bg=COLOR_PANEL,
+            fg=COLOR_TEXT,
+            insertbackground=COLOR_ACCENT,
             font=("TkDefaultFont", 10),
             padx=16,
             pady=16,
@@ -3441,953 +3737,56 @@ class SaveEditorGUI:
         self.help_text_area.pack(side="left", fill="both", expand=True)
         self.help_text_area.configure(yscrollcommand=scroll.set)
         
-        self.help_text_area.tag_configure("header", font=("TkDefaultFont", 11, "bold"), foreground="#3794ff")
+        self.help_text_area.tag_configure("header", font=("TkDefaultFont", 11, "bold"), foreground=COLOR_ACCENT)
         self.help_text_area.tag_configure("highlight", font=("TkDefaultFont", 10, "bold"), foreground="#ff007f")
         self.help_text_area.tag_configure("bullet", font=("TkDefaultFont", 10))
-        self.help_text_area.tag_configure("link", font=("TkDefaultFont", 10, "underline", "bold"), foreground="#3794ff")
+        self.help_text_area.tag_configure("link", font=("TkDefaultFont", 10, "underline", "bold"), foreground=COLOR_ACCENT)
         self.help_text_area.tag_bind("link", "<Button-1>", lambda _: webbrowser.open("https://ko-fi.com/sirnr1"))
         self.help_text_area.tag_bind("link", "<Enter>", lambda _: self.help_text_area.configure(cursor="hand2"))
         self.help_text_area.tag_bind("link", "<Leave>", lambda _: self.help_text_area.configure(cursor=""))
         
-        self.help_text_en = [
-            ("★ BUILT FOR GAME VERSION ", "header"),
-            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
-            ("• Tested against: ", "bullet"),
-            (f"Cargo Hunters {GAME_BUILD_TESTED} (Steam build {GAME_BUILD_TESTED_STEAM}, "
-             f"{GAME_BUILD_TESTED_DATE}). A game update can add items or change what the save "
-             "holds. If your game is newer, run ", "bullet"),
-            ("Refresh Names from Game", "highlight"),
-            (" first - that alone fixes new items showing as raw IDs.\n\n\n", "bullet"),
 
-            ("★ UPDATE NAMES FROM GAME ★\n\n", "header"),
-            ("• Scan Assets: ", "bullet"),
-            ("Click ", "bullet"),
-            ("Refresh Names from Game", "highlight"),
-            (" in the top-right corner. This parses game files to resolve encrypted IDs into readable item, skill, and trader names.\n\n", "bullet"),
 
-            ("• Reload Save: ", "bullet"),
-            ("The game writes the save when a raid ends. If you leave this editor open while you play, click ", "bullet"),
-            ("Reload Save", "highlight"),
-            (" to read the file again instead of restarting. Unsaved changes cannot survive that and you will be asked first.\n\n", "bullet"),
-
-            ("• Safe Editing Workflow: ", "bullet"),
-            ("Only edit and apply changes while your game is in the main menu or shelter. Never save changes while inside an active raid — the game completely overwrites your save file upon extraction or death, erasing your edits.\n\n\n", "bullet"),
-
-            ("★ INVENTORY EDITOR ★\n\n", "header"),
-            ("• Container Scope: ", "bullet"),
-            ("Use the Scope dropdown above the tree to switch between all containers, your backpack, equipment slots, or individual warehouse tabs (0–N). The shelter container has no grid layout in game assets, so it is not offered as a move or spawn target.\n", "bullet"),
-            ("• Expand Folders: ", "bullet"),
-            ("Double-click", "highlight"),
-            (" on category/tab folders to expand their items. A row like \"5 stacks, 95 "
-             "units\" opens the same way, one line per stack, and anything you do to one of "
-             "those lines applies to that stack alone.\n", "bullet"),
-            ("• Search: ", "bullet"),
-            ("Type a name, a category or an id and press Return (or press ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (" to jump straight into the search box). The tree keeps what matches, "
-             "and a hit inside a container opens that container so you can see where it sits. "
-             "An empty box shows everything again. It searches the chosen scope only, so pick "
-             "the tab first.\n", "bullet"),
-            ("• Category Colors: ", "bullet"),
-            ("Toggle ", "bullet"),
-            ("Category Colors", "highlight"),
-            (" on the toolbar to tint rows by their item group (weapons, ammo types, armor, medical, etc.).\n", "bullet"),
-            ("• Multi-Selection & Select All: ", "bullet"),
-            ("Hold Shift or Ctrl while clicking, or press ", "bullet"),
-            ("Ctrl+A", "highlight"),
-            (" while the tree has focus, to select multiple rows. Context menu actions (Delete, Repair, Duplicate, Move) apply to all selected items at once.\n", "bullet"),
-            ("• Condition, Durability & Mint: ", "bullet"),
-            ("The tree displays ", "bullet"),
-            ("COND", "highlight"),
-            (" (0–4.0 scale) for wear on weapons, armor, and limbs, and ", "bullet"),
-            ("DUR", "highlight"),
-            (" for consumable charges (e.g. medkits, repair kits). Repair restores maximum durability, while ", "bullet"),
-            ("Factory fresh (Mint)", "highlight"),
-            (" completely removes the wear records, restoring the item to as-new state.\n", "bullet"),
-            ("• Item Management: ", "bullet"),
-            ("Right-click", "highlight"),
-            (" on any item to open the action context menu:\n", "bullet"),
-            ("  - Repair Item (Ctrl+R): ", "highlight"),
-            ("Restores item durability back to 100%.\n", "bullet"),
-            ("  - Duplicate Item (Ctrl+D): ", "highlight"),
-            ("Creates a clone and asks which container it goes into; the original's own container is the default and Inbox is always available.\n", "bullet"),
-            ("  - Move Item... (Ctrl+M): ", "highlight"),
-            ("Takes the item to another container. Attachments come along, and an equipped "
-             "item leaves its slot empty. The shelter is not offered - the game files do not "
-             "describe its grid, so the editor does not guess at it.\n", "bullet"),
-            ("  - Split Stack...: ", "highlight"),
-            ("Takes part of a stack into a second one. At least one unit stays behind, since "
-             "taking all of them would be a move rather than a split.\n", "bullet"),
-            ("  - Set Stack Size...: ", "highlight"),
-            ("Writes how many units one stack holds, up to what the item can carry. No free "
-             "cell needed, unlike a duplicate. Items the game never stacked are turned down "
-             "rather than turned into stacks.\n", "bullet"),
-            ("  - Repair Item to... -> factory fresh: ", "highlight"),
-            ("The tick in that window does the opposite of setting a value: it removes the "
-             "condition, the record of what the item arrived with, and the charge count. That "
-             "is what the game calls mint - a repair to maximum still reads as repaired, "
-             "because the game keeps the record that the item was damaged.\n", "bullet"),
-            ("  - Attachments...: ", "highlight"),
-            ("Fits parts into the item and takes them off again. The window shows the slots "
-             "on this item with whatever sits in each, and the items of yours that this one "
-             "fits into - only the half that applies. A free slot offers exactly the parts "
-             "the game allows there, out of what you own. Weapons, weapon parts, body parts "
-             "and helmets have slots; the item's own stored size is left alone, so a weapon "
-             "that grew with its parts may want more room in its container.\n", "bullet"),
-            ("  - Item Info (Ctrl+I): ", "highlight"),
-            ("Everything known about the item, read-only: value, weight, size, what "
-             "recycling it yields at each recycler stage - with the one your own module can "
-             "reach marked - and which recipes use it as an ingredient. For a weapon it "
-             "also lists the cartridges it takes and its attachment points as a tree: a "
-             "muzzle device fits the barrel, the barrel fits the receiver, the receiver fits "
-             "the gun. Not only weapons: body parts and helmets have slots too, so an arm "
-             "shows its hydraulics and structure and a helmet its visor. Open the visor "
-             "instead and it names the helmet.\n", "bullet"),
-            ("  - Delete Item (Del): ", "highlight"),
-            ("Removes the item and everything attached to it. To drop a single attachment "
-             "instead, expand the item and right-click that attachment's own row. Warehouse "
-             "tabs and storage roots are refused - they are part of the save's layout, not "
-             "items.\n\n\n", "bullet"),
-            
-            ("★ GAME ITEMS (SPAWNER CATALOG) ★\n\n", "header"),
-            ("• Search & Filter: ", "bullet"),
-            ("Filter by item categories or search for specific item names (focus with ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Toggle ", "bullet"),
-            ("Category Colors", "highlight"),
-            (" to colour rows, or tick ", "bullet"),
-            ("Only new", "highlight"),
-            (" after a name refresh to see what game updates added.\n", "bullet"),
-            ("• Spawn Items: ", "bullet"),
-            ("Right-click an item template in the list and pick ", "bullet"),
-            ("Add to Inventory...", "highlight"),
-            (". One window asks how many, where they go, and - for items that can carry one "
-             "- the condition they start at. Left at the maximum the item is spawned "
-             "pristine, which is how the game stores an untouched one.\n", "bullet"),
-            ("• Spawn a weapon assembled: ", "bullet"),
-            ("Right-click a firearm and pick ", "bullet"),
-            ("Spawn Assembled...", "highlight"),
-            (" to get it the way the game itself builds it, with magazine, barrel, stock and "
-             "sight already in their slots. 53 weapons have such a configuration and some have "
-             "several, in which case you pick from the variants and see what each carries. The "
-             "inbox is not offered here: delivering a weapon with parts on it as mail is "
-             "untested.\n", "bullet"),
-            ("• It needs room: ", "bullet"),
-            ("the game works out how much space an assembled weapon takes on its own and mails "
-             "anything it cannot place, so the editor keeps the weapon's maximum size free. A "
-             "small pouch is refused outright and a full tab answers \"no space\" rather than "
-             "spawning something that would arrive as mail.\n", "bullet"),
-            ("• Assembled weapon limits & Mailbox: ", "bullet"),
-            ("17 of the 53 assembled weapon variants exceed standard grid dimensions with all attachments mounted. The game engine handles oversized weapons by delivering them to your mailbox upon loading. The editor reserves the weapon's full expanded footprint so nothing overlaps.\n", "bullet"),
-            ("• Where it goes: ", "bullet"),
-            ("The list names every container with room and how much of it. A free spot is searched for there, and the item is turned 90° only if it fits no other way. Several items are placed one by one, so you are told if only part of a batch fits.\n", "bullet"),
-            ("• Inbox: ", "bullet"),
-            ("Always offered, also when everything is full. The item is stored without a grid position, so the game cannot place it and hands it to you as mail - which is where anything without room ends up anyway.\n", "bullet"),
-            ("• Weapons reserve more than they show: ", "bullet"),
-            ("a rifle drawn 2x1 can keep a 6x2 area unusable. That is the game's own behaviour; the editor reserves the full area so nothing lands on top of it.\n", "bullet"),
-            ("• Sell at a Trader: ", "bullet"),
-            ("Right-click and pick ", "bullet"),
-            ("Offer at Trader...", "highlight"),
-            (" to put the item into one of a trader's existing offer slots at your own price. "
-             "The trader's next stock refresh undoes it; the same dialog can undo it sooner.\n\n\n", "bullet"),
-
-            ("★ MAILBOX EDITOR ★\n\n", "header"),
-            ("• View & Read: ", "bullet"),
-            ("Check list of messages, senders, read-status, and attached rewards.\n", "bullet"),
-            ("• Delete Letter: ", "bullet"),
-            ("Select a letter and click ", "bullet"),
-            ("Delete selected letter", "highlight"),
-            (" to permanently remove it.\n\n\n", "bullet"),
-
-            ("★ QUESTS ★\n\n", "header"),
-            ("• What the tab shows: ", "bullet"),
-            ("Every quest in the game against the ones your save has met, grouped and split "
-             "into active, completed and never seen. The never-seen branches start open. "
-             "Pick a quest for the full briefing, what it needs finished first, who sends it "
-             "and what it pays.\n", "bullet"),
-            ("• Search: ", "bullet"),
-            ("The box above the tree matches the quest name, its briefing text, the sender, "
-             "the group and the internal id (jump with ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). What is left standing is shown open. An empty box brings the whole list back.\n", "bullet"),
-            ("• Community Guide: ", "bullet"),
-            ("Click ", "bullet"),
-            ("Community guide ↗", "highlight"),
-            (" on the toolbar to open the player-maintained Steam guide in your browser.\n", "bullet"),
-            ("• Read-only: ", "bullet"),
-            ("Nothing here is written back. The progress of a running quest is not in the "
-             "save at all, only what the quest asks for - so it cannot be shown either.\n\n\n",
-             "bullet"),
-
-            ("★ CRAFTING ★\n\n", "header"),
-            ("• What the tab shows: ", "bullet"),
-            ("Every recipe the game's workbenches have, grouped by shelter module and by the "
-             "level that module needs. Each row says what it makes, what it takes, how long "
-             "it runs, and whether you could start it now. Select one and the pane underneath "
-             "lists each ingredient as have / needed, marking what you are short of.\n",
-             "bullet"),
-            ("• Search: ", "bullet"),
-            ("The box above the tree matches the module, the recipe name and what it makes - "
-             "and also what it consumes, so typing an ingredient answers \"what can I even "
-             "do with this?\" (focus with ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Matches are shown open.\n", "bullet"),
-            ("• Not in the game yet: ", "bullet"),
-            ("Some recipes ask for a workbench level the game has no build step for - the 3D "
-             "Printer stops at level 1 and carries recipes for 2 and 3. Those are marked "
-             "rather than listed as craftable.\n", "bullet"),
-            ("• Recycling is elsewhere: ", "bullet"),
-            ("It is the same recipe list read from the item's side, so it lives in Item Info "
-             "where you have the item in hand. Read-only, like the Quests tab.\n\n\n",
-             "bullet"),
-
-            ("★ ☢ HACKERMAN'S LAB ☢ ★\n\n", "header"),
-            ("• Profile Settings: ", "bullet"),
-            ("Edit nickname, level, and experience points in the left pane.\n", "bullet"),
-            ("Unspent skill points sit there too, and are deliberately not capped - the level itself is, at 25. A Counters sub-tab shows the account's sessions, last run and lifetime totals, read-only.\n", "bullet"),
-            ("Set the level first, then the experience points if you want them: changing the level resets them to 0, so doing it the other way round throws your entry away. The most you can enter is one below the next level's goal - landing on it would level you up. The number beside each field is its limit.\n", "bullet"),
-            ("• Character Skills: ", "bullet"),
-            ("Select a skill from the list, input level, and click ", "bullet"),
-            ("Set Level", "highlight"),
-            (". The list shows level and maximum, and every skill has its own ceiling taken from the game data - Combat stops at 6, Lockpicking at 5. Higher values are refused because the game would not accept them.\n", "bullet"),
-            ("• Trader Balances: ", "bullet"),
-            ("Select a trader, adjust level or balance, and click ", "bullet"),
-            ("Set Stats", "highlight"),
-            (".\n", "bullet"),
-            ("• Cheats: ", "bullet"),
-            ("Five one-click buttons. ", "bullet"),
-            ("Max Out All Skills", "highlight"),
-            (" and ", "bullet"),
-            ("Fill Trader Balances", "highlight"),
-            (" (1,000,000 each) do what they say. ", "bullet"),
-            ("Repair All Items", "highlight"),
-            (" takes everything to its maximum, while ", "bullet"),
-            ("Make Everything Factory Fresh", "highlight"),
-            (" removes the wear record instead, which is the stronger one: the save then "
-             "reads as never used. ", "bullet"),
-            ("Fill All Stacks", "highlight"),
-            (" tops every stack up to what its item can carry. The last two ask first and "
-             "say afterwards how much they touched; nothing is written until you "
-             "apply.\n\n\n", "bullet"),
-
-            ("★ RAW JSON ★\n\n", "header"),
-            ("• What the tab shows: ", "bullet"),
-            ("The full formatted JSON representation of your in-memory save data. It reflects "
-             "both saved and staged changes, including exact IDs, quantities, and structure.\n",
-             "bullet"),
-            ("• Search: ", "bullet"),
-            ("Case-insensitive text search across the raw save data with live match counter "
-             "and Next / Prev navigation (Enter / Shift+Enter). Focus search directly with ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (".\n", "bullet"),
-            ("• Word wrap & Copy: ", "bullet"),
-            ("Toggle word wrap to avoid horizontal scrolling, or click Copy JSON to place the "
-             "entire text onto the system clipboard. Read-only, like Quests and Crafting.\n\n\n",
-             "bullet"),
-
-            ("★ KEYBOARD SHORTCUTS ★\n\n", "header"),
-            ("• Global Shortcuts: ", "bullet"),
-            ("Available across the entire window:\n", "bullet"),
-            ("  - Ctrl+S: ", "highlight"),
-            ("Applies pending changes to the save file (prompts for confirmation and creates a backup first).\n", "bullet"),
-            ("  - Ctrl+F: ", "highlight"),
-            ("Jumps focus straight into the search box of the currently active tab (Inventory, Catalog, Quests, Crafting, or Raw JSON).\n", "bullet"),
-            ("• Inventory Tree Shortcuts: ", "bullet"),
-            ("Active when navigating items in the inventory tree:\n", "bullet"),
-            ("  - Shift+Click / Ctrl+Click: ", "highlight"),
-            ("Selects a range or toggles individual items for batch operations.\n", "bullet"),
-            ("  - Del: ", "highlight"),
-            ("Deletes selected item(s) and their attachments.\n", "bullet"),
-            ("  - Ctrl+D: ", "highlight"),
-            ("Duplicates selected item(s).\n", "bullet"),
-            ("  - Ctrl+R: ", "highlight"),
-            ("Repairs selected item(s) to 100% durability.\n", "bullet"),
-            ("  - Ctrl+M: ", "highlight"),
-            ("Moves selected item(s) to another container.\n", "bullet"),
-            ("  - Ctrl+I: ", "highlight"),
-            ("Opens the detailed Item Info window.\n", "bullet"),
-            ("  - Ctrl+A: ", "highlight"),
-            ("Selects all visible rows in the current container scope.\n", "bullet"),
-            ("• Raw JSON Navigation: ", "bullet"),
-            ("When searching in the Raw JSON tab, press ", "bullet"),
-            ("Enter", "highlight"),
-            (" to jump to the next match, or ", "bullet"),
-            ("Shift+Enter", "highlight"),
-            (" to jump to the previous match.\n\n\n", "bullet"),
-
-            ("★ SAVING YOUR CHANGES ★\n\n", "header"),
-            ("• Apply Edits: ", "bullet"),
-            ("Click ", "bullet"),
-            ("Apply Changes", "highlight"),
-            (" (or press ", "bullet"),
-            ("Ctrl+S", "highlight"),
-            (") at the top right to save all edits to your file. It shows the list of what it "
-             "is about to write first - every new item, every removed one, every changed "
-             "field with the value before and after - and waits for a yes. Cancel and nothing "
-             "is written. The list compares against the file on disk, so it also shows what "
-             "the game changed while the editor was open.\n", "bullet"),
-            ("• Undo Edits: ", "bullet"),
-            ("Click ", "bullet"),
-            ("Discard Changes", "highlight"),
-            (" to revert any unsaved modifications.\n", "bullet"),
-            ("• Backups: ", "bullet"),
-            ("Every apply first copies your save, with a timestamp, into the ", "bullet"),
-            ("backups", "highlight"),
-            (" folder next to this program. Nothing there is ever overwritten. ", "bullet"),
-            ("Keep backups", "highlight"),
-            (" in the bottom right sets how many are kept - once the next one is written, "
-             "anything older than that is deleted. Set it to 0 to keep every backup.\n", "bullet"),
-            ("• Going back: ", "bullet"),
-            ("Restore backup...", "highlight"),
-            (" puts one back in place of your save. Your current save is copied aside first, "
-             "so the restore itself can be undone. Nothing in the folder is deleted, and a "
-             "file this editor did not write is never offered.\n", "bullet"),
-            ("• Status Bar Controls: ", "bullet"),
-            ("The bottom bar houses the background synth music toggle (", "bullet"),
-            ("🔇 / 🔊", "highlight"),
-            ("), the language switcher (US, DE, RU), and the backup retention spinner. Setting ", "bullet"),
-            ("Keep backups", "highlight"),
-            (" to 0 ensures all historical backups are preserved indefinitely.\n\n\n", "bullet"),
-
-            ("★ SUPPORT THE PROJECT ★\n\n", "header"),
-            ("• Support on Ko-fi: ", "bullet"),
-            ("If you enjoy using this free save editor, consider supporting development on Ko-fi:\n", "bullet"),
-            ("https://ko-fi.com/sirnr1\n", "link"),
-        ]
-
-        self.help_text_de = [
-            ("★ GEBAUT FÜR SPIELVERSION ", "header"),
-            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
-            ("• Getestet gegen: ", "bullet"),
-            (f"Cargo Hunters {GAME_BUILD_TESTED} (Steam-Build {GAME_BUILD_TESTED_STEAM}, "
-             f"{GAME_BUILD_TESTED_DATE}). Ein Spiel-Update kann Gegenstände hinzufügen oder "
-             "ändern, was im Speicherstand steht. Ist dein Spiel neuer, zuerst ", "bullet"),
-            ("Namen aus dem Spiel aktualisieren", "highlight"),
-            (" ausführen - das allein behebt neue Gegenstände, die als rohe IDs erscheinen.\n\n\n", "bullet"),
-
-            ("★ SPIELNAMEN AKTUALISIEREN ★\n\n", "header"),
-            ("• Assets scannen: ", "bullet"),
-            ("Klicke auf ", "bullet"),
-            ("Spielnamen aktualisieren", "highlight"),
-            (" in der oberen rechten Ecke. Dies analysiert die Spieldateien, um kryptische IDs in lesbare Gegenstands-, Skill- und Händlernamen aufzulösen.\n\n", "bullet"),
-
-            ("• Spielstand neu laden: ", "bullet"),
-            ("Das Spiel schreibt den Spielstand am Ende eines Raids. Wenn du den Editor beim Spielen offen lässt, klicke auf ", "bullet"),
-            ("Spielstand neu laden", "highlight"),
-            (", statt ihn neu zu starten. Ungespeicherte Änderungen überstehen das nicht - danach wird vorher gefragt.\n\n", "bullet"),
-
-            ("• Sicherer Bearbeitungs-Workflow: ", "bullet"),
-            ("Bearbeite und übernimm Änderungen nur, wenn dein Spiel im Hauptmenü oder im Unterschlupf steht. Speichere niemals während eines aktiven Raids – das Spiel überschreibt die Datei beim Verlassen oder Sterben vollständig und löscht deine Änderungen.\n\n\n", "bullet"),
-
-            ("★ INVENTAR-EDITOR ★\n\n", "header"),
-            ("• Container-Auswahl (Scope): ", "bullet"),
-            ("Nutze das Scope-Dropdown über dem Baum, um gezielt zwischen allen Behältern, Rucksack, Ausrüstung oder einzelnen Lager-Tabs (0–N) umzuschalten. Der Unterschlupf hat in den Spieldateien kein definiertes Raster und steht daher nicht als Ziel zur Wahl.\n", "bullet"),
-            ("• Ordner erweitern: ", "bullet"),
-            ("Doppelklicke", "highlight"),
-            (" auf Kategorie- oder Reiter-Ordner, um deren Inhalt anzuzeigen. Eine Zeile wie "
-             "\"5 Stapel, 95 Einheiten\" klappt genauso auf, eine Zeile je Stapel, und was du "
-             "mit einer dieser Zeilen machst, betrifft nur diesen einen Stapel.\n", "bullet"),
-            ("• Suche: ", "bullet"),
-            ("Namen, Kategorie oder ID eintippen und Eingabetaste drücken (oder ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (" drücken, um direkt ins Suchfeld zu springen). Der Baum zeigt nur "
-             "noch die Treffer, und ein Treffer in einem Behälter klappt diesen auf, damit du "
-             "siehst, wo er steckt. Leeres Feld zeigt wieder alles. Gesucht wird nur im "
-             "gewählten Bereich, also vorher den Reiter auswählen.\n", "bullet"),
-            ("• Kategorie-Farben: ", "bullet"),
-            ("Aktiviere ", "bullet"),
-            ("Kategorie-Farben", "highlight"),
-            (" in der Menüleiste, um Zeilen nach Gegenstandsgruppen (Waffen, Munitionstypen, Rüstung, Medizin usw.) farblich hervorzuheben.\n", "bullet"),
-            ("• Mehrfachauswahl & Alles auswählen: ", "bullet"),
-            ("Halte Shift oder Strg beim Anklicken gedrückt, oder drücke ", "bullet"),
-            ("Ctrl+A", "highlight"),
-            (" bei fokussiertem Inventarbaum, um alle aktuell sichtbaren Zeilen im gewählten Behälter zu markieren. Aktionen wie Löschen, Reparieren, Duplizieren und Verschieben wirken auf alle markierten Gegenstände gleichzeitig.\n", "bullet"),
-            ("• Zustand, Haltbarkeit & Fabrikneu: ", "bullet"),
-            ("Der Baum zeigt ", "bullet"),
-            ("COND", "highlight"),
-            (" (Skala 0–4,0) für die Abnutzung von Waffen, Rüstung und Gliedmaßen, und ", "bullet"),
-            ("DUR", "highlight"),
-            (" für Ladungen von Verbrauchsgütern (z. B. MedKits, Reparatursets). Reparieren setzt Werte auf Maximum, während ", "bullet"),
-            ("Fabrikneu (Mint)", "highlight"),
-            (" den Abnutzungseintrag restlos entfernt, sodass das Stück als fabrikneu gilt.\n", "bullet"),
-            ("• Gegenstandsverwaltung: ", "bullet"),
-            ("Klicke mit der rechten Maustaste", "highlight"),
-            (" auf einen beliebigen Gegenstand, um das Kontextmenü zu öffnen:\n", "bullet"),
-            ("  - Gegenstand reparieren (Ctrl+R): ", "highlight"),
-            ("Setzt die Haltbarkeit des Gegenstands auf 100% zurück.\n", "bullet"),
-            ("  - Gegenstand duplizieren (Ctrl+D): ", "highlight"),
-            ("Erstellt eine Kopie und fragt, in welchen Behälter sie soll; vorgegeben ist der Behälter des Originals, der Posteingang steht immer zur Wahl.\n", "bullet"),
-            ("  - Gegenstand verschieben... (Ctrl+M): ", "highlight"),
-            ("Bringt den Gegenstand in einen anderen Behälter. Anbauteile kommen mit, und ein "
-             "ausgerüsteter Gegenstand lässt seinen Platz leer zurück. Der Unterschlupf wird "
-             "nicht angeboten - die Spieldateien beschreiben sein Raster nicht, und der Editor "
-             "rät die Größe nicht.\n", "bullet"),
-            ("  - Stapel teilen...: ", "highlight"),
-            ("Trennt einen Teil eines Stapels zu einem zweiten ab. Mindestens ein Stück bleibt "
-             "zurück, denn alles abzutrennen wäre ein Verschieben und kein Teilen.\n", "bullet"),
-            ("  - Stapelgröße setzen...: ", "highlight"),
-            ("Schreibt, wie viele Einheiten ein Stapel enthält, bis zu dem, was der "
-             "Gegenstand fassen kann. Anders als beim Duplizieren wird dafür keine freie "
-             "Zelle gebraucht. Was das Spiel nie gestapelt hat, wird auch nicht zum Stapel.\n",
-             "bullet"),
-            ("  - Reparieren auf... -> fabrikneu: ", "highlight"),
-            ("Der Haken in dem Fenster macht das Gegenteil von einen Wert setzen: Er entfernt "
-             "den Zustand, den Vermerk, womit das Stück ankam, und die Ladungen. Genau das "
-             "heißt im Spiel mint - eine Reparatur auf Maximum bleibt eine Reparatur, weil "
-             "das Spiel den Vermerk behält, dass der Gegenstand Schaden hatte.\n", "bullet"),
-            ("  - Anbauteile...: ", "highlight"),
-            ("Montiert Teile an den Gegenstand und nimmt sie wieder ab. Das Fenster zeigt die "
-             "Aufnahmen dieses Gegenstands mit dem, was darin sitzt, und deine Gegenstände, "
-             "auf die dieser passt - jeweils nur die Hälfte, die zutrifft. Eine freie Aufnahme "
-             "bietet genau die Teile an, die das Spiel dort erlaubt, aus deinem Bestand. "
-             "Aufnahmen haben Waffen, Waffenteile, Körperteile und Helme. Die gespeicherte "
-             "Größe des Wirts bleibt unverändert - eine mit Teilen gewachsene Waffe kann in "
-             "ihrem Behälter mehr Platz brauchen.\n", "bullet"),
-            ("  - Info zum Gegenstand (Ctrl+I): ", "highlight"),
-            ("Alles, was über den Gegenstand bekannt ist, nur zur Ansicht: Wert, Gewicht, "
-             "Größe, was beim Recyceln auf jeder Ausbaustufe herauskommt - die für deinen "
-             "eigenen Recycler erreichbare ist markiert - und in welchen Rezepten er Zutat "
-             "ist. Bei einer Waffe zusätzlich die passende Munition und die Anbaupunkte als "
-             "Baum: eine Mündungsvorrichtung sitzt am Lauf, der Lauf am Receiver, der "
-             "Receiver an der Waffe. Nicht nur Waffen: Körperteile und Helme haben ebenfalls "
-             "Slots, ein Arm zeigt also Hydraulik und Struktur und ein Helm sein Visier. "
-             "Öffnest du stattdessen das Visier, nennt es den Helm.\n", "bullet"),
-            ("  - Gegenstand löschen (Del): ", "highlight"),
-            ("Entfernt den Gegenstand samt allem, was daran hängt. Um nur einen einzelnen "
-             "Anbauteil zu entfernen, klappe den Gegenstand auf und mache den Rechtsklick auf "
-             "die Zeile des Anbauteils. Lagerreiter und Container-Wurzeln werden abgelehnt - "
-             "sie gehören zum Aufbau des Saves und sind keine Gegenstände.\n\n\n", "bullet"),
-            
-            ("★ GEGENSTANDSSPAWNER (KATALOG) ★\n\n", "header"),
-            ("• Suchen & Filtern: ", "bullet"),
-            ("Filtere nach Kategorien oder suche nach bestimmten Namen (Fokus mit ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Aktiviere ", "bullet"),
-            ("Kategorie-Farben", "highlight"),
-            (" für farbliche Zeilen, oder aktiviere ", "bullet"),
-            ("Nur neue", "highlight"),
-            (" nach einem Namens-Update, um Neuerungen zu sehen.\n", "bullet"),
-            ("• Gegenstände spawnen: ", "bullet"),
-            ("Rechtsklick auf einen Gegenstand in der Liste, dann ", "bullet"),
-            ("Zum Inventar hinzufügen...", "highlight"),
-            (". Ein Fenster fragt wie viele, wohin, und - bei Gegenständen, die einen tragen "
-             "können - mit welchem Zustand sie beginnen. Beim Maximum entstehen sie "
-             "makellos, so wie das Spiel einen unberührten Gegenstand ablegt.\n", "bullet"),
-            ("• Waffe fertig aufgebaut: ", "bullet"),
-            ("Rechtsklick auf eine Schusswaffe und ", "bullet"),
-            ("Fertig aufgebaut spawnen...", "highlight"),
-            (" liefert sie so, wie das Spiel sie selbst baut - Magazin, Lauf, Schaft und "
-             "Visier sitzen schon in ihren Aufnahmen. 53 Waffen haben so eine Konfiguration, "
-             "manche mehrere; dann wählst du aus den Varianten und siehst, was jede trägt. Der "
-             "Posteingang steht hier nicht zur Wahl: eine Waffe mit Teilen als Post zu "
-             "schicken ist ungetestet.\n", "bullet"),
-            ("• Sie braucht Platz: ", "bullet"),
-            ("wie viel Fläche eine zusammengebaute Waffe belegt, rechnet das Spiel selbst aus, "
-             "und was es nicht platzieren kann, kommt ins Postfach. Der Editor hält deshalb die "
-             "Maximalgröße der Waffe frei. Eine kleine Tasche wird direkt abgelehnt, ein voller "
-             "Reiter antwortet mit \"kein Platz\" statt etwas zu spawnen, das als Post "
-             "ankommt.\n", "bullet"),
-            ("• Übergrößen bei Waffen & Postfach: ", "bullet"),
-            ("17 der 53 aufgebauten Waffenvarianten überschreiten mit allen Anbauteilen die regulären Rastermaße. Das Spiel leitet solche Übergrößen beim Laden automatisch ins Postfach um. Der Editor reserviert stets die voll erweiterte Fläche, damit nichts überlappt.\n", "bullet"),
-            ("• Wohin es kommt: ", "bullet"),
-            ("Die Liste nennt jeden Behälter mit Platz und wie viel davon frei ist. Dort wird ein freier Platz gesucht, gedreht wird nur, wenn es sonst nicht passt. Mehrere Gegenstände werden einzeln platziert; passt nur ein Teil, wird es dir gesagt.\n", "bullet"),
-            ("• Posteingang: ", "bullet"),
-            ("Steht immer zur Wahl, auch wenn alles voll ist. Der Gegenstand wird ohne Rasterposition abgelegt, das Spiel kann ihn nicht platzieren und gibt ihn dir als Post - dort landet ohnehin alles, was keinen Platz findet.\n", "bullet"),
-            ("• Waffen belegen mehr als sie zeigen: ", "bullet"),
-            ("ein als 2x1 gezeichnetes Gewehr kann 6x2 sperren. Das macht das Spiel so; der Editor reserviert die volle Fläche, damit nichts darauf landet.\n", "bullet"),
-            ("• Beim Händler verkaufen: ", "bullet"),
-            ("Rechtsklick, dann ", "bullet"),
-            ("Beim Händler anbieten...", "highlight"),
-            (" legt den Gegenstand zu deinem Preis in einen bestehenden Angebots-Slot eines "
-             "Händlers. Das nächste Sortiments-Update des Händlers macht das rückgängig, "
-             "derselbe Dialog kann es auch früher.\n\n\n", "bullet"),
-
-            ("★ POSTFACH-EDITOR ★\n\n", "header"),
-            ("• Anzeigen & Lesen: ", "bullet"),
-            ("Überprüfe Nachrichten, Absender, Lesestatus und angehängte Belohnungen.\n", "bullet"),
-            ("• Brief löschen: ", "bullet"),
-            ("Wähle einen Brief aus und klicke auf ", "bullet"),
-            ("Ausgewählten Brief löschen", "highlight"),
-            (" um ihn dauerhaft zu entfernen.\n\n\n", "bullet"),
-
-            ("★ QUESTS ★\n\n", "header"),
-            ("• Was der Reiter zeigt: ", "bullet"),
-            ("Alle Quests des Spiels gegen die, denen dein Spielstand begegnet ist - "
-             "gruppiert und aufgeteilt in aktiv, erledigt und nie gesehen. Die "
-             "Nie-gesehen-Zweige sind offen. Wähle eine Quest für den vollen Text, was sie "
-             "voraussetzt, wer sie schickt und was sie bringt.\n", "bullet"),
-            ("• Suche: ", "bullet"),
-            ("Das Feld über dem Baum sucht in Questname, Auftragstext, Absender, Gruppe und "
-             "interner ID (Fokus mit ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Was stehen bleibt, wird aufgeklappt gezeigt. Leeres Feld holt "
-             "die ganze Liste zurück.\n", "bullet"),
-            ("• Community-Guide: ", "bullet"),
-            ("Klicke in der Leiste auf ", "bullet"),
-            ("Community guide ↗", "highlight"),
-            (", um den von Spielern gepflegten Steam-Guide im Browser zu öffnen.\n", "bullet"),
-            ("• Nur zur Ansicht: ", "bullet"),
-            ("Hier wird nichts zurückgeschrieben. Der Fortschritt einer laufenden Quest steht "
-             "gar nicht im Spielstand, nur ihr Ziel - deshalb lässt er sich auch nicht "
-             "anzeigen.\n\n\n", "bullet"),
-
-            ("★ HERSTELLUNG ★\n\n", "header"),
-            ("• Was der Reiter zeigt: ", "bullet"),
-            ("Jedes Rezept der Werkbänke im Spiel, gruppiert nach Shelter-Modul und nach der "
-             "Stufe, die das Modul dafür braucht. Jede Zeile nennt Ergebnis, Zutaten, Dauer "
-             "und ob du sofort anfangen könntest. Bei Auswahl listet das Feld darunter jede "
-             "Zutat als vorhanden / nötig und hebt hervor, was fehlt.\n", "bullet"),
-            ("• Suche: ", "bullet"),
-            ("Das Feld über dem Baum sucht in Modul, Rezeptname und Ergebnis - und auch in "
-             "den Zutaten, eine Zutat einzutippen beantwortet also \"was kann ich damit "
-             "überhaupt anfangen?\" (Fokus mit ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Treffer werden aufgeklappt gezeigt.\n", "bullet"),
-            ("• Noch nicht im Spiel: ", "bullet"),
-            ("Manche Rezepte verlangen eine Werkbankstufe, für die es keinen Bauschritt gibt "
-             "- der 3D-Printer endet bei Stufe 1 und hat Rezepte für 2 und 3. Die sind "
-             "markiert und nicht als machbar gelistet.\n", "bullet"),
-            ("• Recyceln steht anderswo: ", "bullet"),
-            ("Es ist dieselbe Rezeptliste von der Gegenstandsseite und steht deshalb in der "
-             "Gegenstandsinfo, wo du den Gegenstand in der Hand hast. Nur zur Ansicht, wie "
-             "der Quests-Reiter.\n\n\n", "bullet"),
-
-            ("★ ☢ HACKERMANS LABOR ☢ ★\n\n", "header"),
-            ("• Profileinstellungen: ", "bullet"),
-            ("Bearbeite Nickname, Level und Erfahrungspunkte im linken Bereich.\n", "bullet"),
-            ("Dort stehen auch die freien Skillpunkte, die bewusst unbegrenzt sind - das Level selbst ist es nicht, bei 25 ist Schluss. Der Reiter Statistik zeigt Sitzungen, letzte Runde und Gesamtwerte des Kontos, nur zur Ansicht.\n", "bullet"),
-            ("Setze zuerst das Level und danach die Erfahrungspunkte, falls du sie willst: ein Levelwechsel setzt sie auf 0, umgekehrt wirfst du deine Eingabe also weg. Mehr als eins unter dem Ziel der nächsten Stufe geht nicht - genau darauf würdest du aufsteigen. Die Zahl neben jedem Feld ist dessen Grenze.\n", "bullet"),
-            ("• Charakterskills: ", "bullet"),
-            ("Wähle einen Skill aus, gib das Level ein und klicke auf ", "bullet"),
-            ("Level setzen", "highlight"),
-            (". Die Liste zeigt Stufe und Maximum, und jeder Skill hat seine eigene Obergrenze aus den Spieldaten - Kampf endet bei 6, Schlossknacken bei 5. Höhere Werte werden abgelehnt, weil das Spiel sie nicht annehmen würde.\n", "bullet"),
-            ("• Händlerguthaben: ", "bullet"),
-            ("Wähle einen Händler aus, passe Level oder Guthaben an und klicke auf ", "bullet"),
-            ("Werte setzen", "highlight"),
-            (".\n", "bullet"),
-            ("• Cheats: ", "bullet"),
-            ("Fünf Knöpfe mit einem Klick. ", "bullet"),
-            ("Alle Skills maximieren", "highlight"),
-            (" und ", "bullet"),
-            ("Händlerguthaben auffüllen", "highlight"),
-            (" (je 1.000.000) tun, was sie sagen. ", "bullet"),
-            ("Alle Gegenstände reparieren", "highlight"),
-            (" bringt alles auf sein Maximum, ", "bullet"),
-            ("Alles auf fabrikneu", "highlight"),
-            (" nimmt stattdessen den Verschleißeintrag weg und geht damit weiter: der "
-             "Spielstand liest sich danach wie nie benutzt. ", "bullet"),
-            ("Alle Stapel auffüllen", "highlight"),
-            (" füllt jeden Stapel bis zu dem, was der jeweilige Gegenstand fasst. Die "
-             "letzten beiden fragen vorher und sagen hinterher, wie viel sie angefasst "
-             "haben; geschrieben wird nichts, bevor du übernimmst.\n\n\n", "bullet"),
-
-            ("★ RAW JSON ★\n\n", "header"),
-            ("• Was der Reiter zeigt: ", "bullet"),
-            ("Die vollständige formatierte JSON-Darstellung des im Speicher geladenen Spielstands. "
-             "Zeigt sowohl gespeicherte als auch ausstehende Änderungen mit exakten IDs, Zahlen und Struktur.\n",
-             "bullet"),
-            ("• Suche: ", "bullet"),
-            ("Groß-/Kleinschreibung ignorierende Volltextsuche mit Live-Trefferzähler und "
-             "Weiterschalten über Vor / Zurück (Enter / Shift+Enter). Schnellsprung mit ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (".\n", "bullet"),
-            ("• Zeilenumbruch & Kopieren: ", "bullet"),
-            ("Zeilenumbruch umschalten, um horizontales Scrollen zu vermeiden, oder den gesamten "
-             "JSON-Inhalt mit einem Klick in die Zwischenablage kopieren. Schreibgeschützt.\n\n\n",
-             "bullet"),
-
-            ("★ TASTATURKÜRZEL ★\n\n", "header"),
-            ("• Globale Kürzel: ", "bullet"),
-            ("Über das gesamte Hauptfenster hinweg verfügbar:\n", "bullet"),
-            ("  - Ctrl+S: ", "highlight"),
-            ("Änderungen in die Spielstandsdatei übernehmen (öffnet die Prüfliste und sichert vorher ein Backup).\n", "bullet"),
-            ("  - Ctrl+F: ", "highlight"),
-            ("Springt direkt mit dem Cursor in das Suchfeld des aktuell aktiven Reiters (Inventar, Katalog, Quests, Herstellung oder Raw JSON).\n", "bullet"),
-            ("• Inventarbaum-Kürzel: ", "bullet"),
-            ("Aktiv bei der Navigation im Inventarbaum:\n", "bullet"),
-            ("  - Shift+Klick / Strg+Klick: ", "highlight"),
-            ("Wählt einen Bereich oder einzelne Gegenstände für gemeinsame Aktionen aus.\n", "bullet"),
-            ("  - Del: ", "highlight"),
-            ("Ausgewählte(n) Gegenstand samt Anbauten löschen.\n", "bullet"),
-            ("  - Ctrl+D: ", "highlight"),
-            ("Ausgewählte(n) Gegenstand duplizieren.\n", "bullet"),
-            ("  - Ctrl+R: ", "highlight"),
-            ("Ausgewählte(n) Gegenstand auf 100% Haltbarkeit reparieren.\n", "bullet"),
-            ("  - Ctrl+M: ", "highlight"),
-            ("Ausgewählte(n) Gegenstand in einen anderen Behälter verschieben.\n", "bullet"),
-            ("  - Ctrl+I: ", "highlight"),
-            ("Ausführliches Info-Fenster zum Gegenstand öffnen.\n", "bullet"),
-            ("  - Ctrl+A: ", "highlight"),
-            ("Alle aktuell sichtbaren Zeilen im gewählten Behälter markieren.\n", "bullet"),
-            ("• Raw-JSON-Navigation: ", "bullet"),
-            ("Bei der Textsuche im Raw-JSON-Reiter springt ", "bullet"),
-            ("Enter", "highlight"),
-            (" zum nächsten Treffer und ", "bullet"),
-            ("Shift+Enter", "highlight"),
-            (" zum vorherigen Treffer.\n\n\n", "bullet"),
-
-            ("★ ÄNDERUNGEN SPEICHERN ★\n\n", "header"),
-            ("• Änderungen übernehmen: ", "bullet"),
-            ("Klicke oben rechts auf ", "bullet"),
-            ("Änderungen übernehmen", "highlight"),
-            (" (oder drücke ", "bullet"),
-            ("Ctrl+S", "highlight"),
-            ("), um alle Änderungen in deine Datei zu schreiben. Es zeigt vorher die Liste dessen, "
-             "was geschrieben werden soll - jeder neue Gegenstand, jeder entfernte, jedes geänderte Feld mit Wert vorher und nachher - "
-             "und wartet auf ein Ja. Bei Abbruch wird nichts geschrieben. Verglichen wird mit der Datei auf der Platte, du siehst also auch, was das Spiel nebenher geändert hat.\n", "bullet"),
-            ("• Änderungen verwerfen: ", "bullet"),
-            ("Klicke auf ", "bullet"),
-            ("Änderungen verwerfen", "highlight"),
-            (" um alle ungespeicherten Änderungen rückgängig zu machen.\n", "bullet"),
-            ("• Backups: ", "bullet"),
-            ("Jedes Übernehmen kopiert deinen Spielstand vorher mit Zeitstempel in den Ordner ", "bullet"),
-            ("backups", "highlight"),
-            (" neben diesem Programm. Dort wird nie etwas überschrieben. ", "bullet"),
-            ("Backups behalten", "highlight"),
-            (" unten rechts legt fest, wie viele aufbewahrt werden - sobald das nächste "
-             "geschrieben wird, verschwindet alles Ältere darüber hinaus. Mit 0 bleibt "
-             "jedes Backup erhalten.\n", "bullet"),
-            ("• Zurück: ", "bullet"),
-            ("Backup zurückspielen...", "highlight"),
-            (" setzt eines an die Stelle deines Spielstands. Der aktuelle Stand wird vorher "
-             "weggesichert, das Zurückspielen ist also selbst umkehrbar. Im Ordner wird nichts "
-             "gelöscht, und eine Datei, die dieser Editor nicht geschrieben hat, wird gar "
-             "nicht erst angeboten.\n", "bullet"),
-            ("• Statusleisten-Optionen: ", "bullet"),
-            ("Die Leiste am unteren Rand enthält den Schalter für die Hintergrundmusik (", "bullet"),
-            ("🔇 / 🔊", "highlight"),
-            ("), die Sprachauswahl (US, DE, RU) und die Backup-Aufbewahrung. Ein Wert von 0 bei ", "bullet"),
-            ("Backups behalten", "highlight"),
-            (" bewahrt alle bisherigen Sicherungen dauerhaft auf.\n\n\n", "bullet"),
-
-            ("★ PROJEKT UNTERSTÜTZEN ★\n\n", "header"),
-            ("• Auf Ko-fi unterstützen: ", "bullet"),
-            ("Wenn dir dieser kostenlose Speicherstand-Editor gefällt, kannst du die Entwicklung auf Ko-fi unterstützen:\n", "bullet"),
-            ("https://ko-fi.com/sirnr1\n", "link"),
-        ]
-
-        self.help_text_ru = [
-            ("★ СОБРАНО ДЛЯ ВЕРСИИ ИГРЫ ", "header"),
-            (f"{GAME_BUILD_TESTED} ★\n\n", "header"),
-            ("• Проверено на: ", "bullet"),
-            (f"Cargo Hunters {GAME_BUILD_TESTED} (сборка Steam {GAME_BUILD_TESTED_STEAM}, "
-             f"{GAME_BUILD_TESTED_DATE}). Обновление игры может добавить предметы или изменить "
-             "содержимое сохранения. Если игра новее, сначала выполните ", "bullet"),
-            ("Обновить имена из игры", "highlight"),
-            (" - это уже исправит новые предметы, показанные как сырые ID.\n\n\n", "bullet"),
-
-            ("★ ОБНОВЛЕНИЕ ИГРОВЫХ ИМЕН ★\n\n", "header"),
-            ("• Сканирование ресурсов: ", "bullet"),
-            ("Нажмите кнопку ", "bullet"),
-            ("Обновить имена из игры", "highlight"),
-            (" в правом верхнем углу окна. Это просканирует файлы игры для сопоставления зашифрованных ID с реальными именами предметов, навыков и торговцев.\n\n", "bullet"),
-
-            ("• Перезагрузить сохранение: ", "bullet"),
-            ("Игра записывает сохранение по окончании рейда. Если редактор остаётся открытым во время игры, нажмите ", "bullet"),
-            ("Перезагрузить сохранение", "highlight"),
-            (", вместо того чтобы перезапускать его. Несохранённые изменения этого не переживут - сначала будет задан вопрос.\n\n", "bullet"),
-
-            ("• Безопасный процесс редактирования: ", "bullet"),
-            ("Редактируйте и сохраняйте изменения только тогда, когда игра находится в главном меню или в убежище. Никогда не сохраняйте изменения во время активного рейда — игра полностью перезаписывает файл сохранения при выходе или смерти, уничтожая ваши правки.\n\n\n", "bullet"),
-
-            ("★ РЕДАКТОР ИНВЕНТАРЯ ★\n\n", "header"),
-            ("• Область контейнеров (Scope): ", "bullet"),
-            ("Используйте выпадающий список Scope над деревом для переключения между всеми контейнерами, рюкзаком, слотами экипировки или отдельными вкладками склада (0–N). Убежище не имеет сеточной структуры в файлах игры и поэтому недоступно для перемещения или спавна.\n", "bullet"),
-            ("• Развернуть папки: ", "bullet"),
-            ("Дважды щелкните", "highlight"),
-            (" по папкам категорий, чтобы показать их содержимое. Строка вида «5 стаков, "
-             "95 единиц» раскрывается так же — по строке на стак, и действие над такой "
-             "строкой касается только этого стака.\n", "bullet"),
-            ("• Поиск: ", "bullet"),
-            ("Введите название, категорию или идентификатор и нажмите Enter (или ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (" для быстрого перехода в строку поиска). В дереве "
-             "останутся только совпадения, а найденное внутри контейнера раскроет этот "
-             "контейнер. Пустое поле снова показывает всё. Поиск идёт только по выбранной "
-             "области, поэтому сначала выберите вкладку.\n", "bullet"),
-            ("• Цвета категорий: ", "bullet"),
-            ("Включите флажок ", "bullet"),
-            ("Цвета категорий", "highlight"),
-            (" на панели инструментов для подсветки строк по типам предметов (оружие, типы патронов, броня, медицина и др.).\n", "bullet"),
-            ("• Множественный выбор & Выделить всё: ", "bullet"),
-            ("Удерживайте Shift или Ctrl при клике или нажмите ", "bullet"),
-            ("Ctrl+A", "highlight"),
-            (" при фокусе на дереве инвентаря, чтобы выделить все видимые строки в текущем контейнере. Действия контекстного меню (Удалить, Починить, Дублировать, Переместить) применяются ко всем выбранным предметам одновременно.\n", "bullet"),
-            ("• Состояние, прочность и как новое: ", "bullet"),
-            ("В дереве отображается ", "bullet"),
-            ("COND", "highlight"),
-            (" (шкала 0–4.0) для износа оружия, брони и конечностей, и ", "bullet"),
-            ("DUR", "highlight"),
-            (" для зарядов расходников (например, аптечек, ремнаборов). Починка восстанавливает максимальную прочность, а ", "bullet"),
-            ("Как новое (Mint)", "highlight"),
-            (" полностью удаляет записи об износе, возвращая предмету идеальное заводское состояние.\n", "bullet"),
-            ("• Управление предметами: ", "bullet"),
-            ("Нажмите правой кнопкой мыши", "highlight"),
-            (" по любому предмету для открытия контекстного меню:\n", "bullet"),
-            ("  - Починить предмет (Ctrl+R): ", "highlight"),
-            ("Восстанавливает прочность предмета до 100%.\n", "bullet"),
-            ("  - Дублировать предмет (Ctrl+D): ", "highlight"),
-            ("Создаёт копию и спрашивает, в какой контейнер её поместить; по умолчанию — контейнер оригинала, Входящие доступны всегда.\n", "bullet"),
-            ("  - Переместить предмет... (Ctrl+M): ", "highlight"),
-            ("Переносит предмет в другой контейнер. Навески перемещаются вместе с ним, а "
-             "надетый предмет освобождает свой слот. Убежище не предлагается: игровые файлы "
-             "не описывают его сетку, и редактор не угадывает размер.\n", "bullet"),
-            ("  - Разделить стак...: ", "highlight"),
-            ("Отделяет часть стака во второй стак. Хотя бы одна штука остаётся на месте: "
-             "отделить всё — это перемещение, а не разделение.\n", "bullet"),
-            ("  - Задать размер стака...: ", "highlight"),
-            ("Записывает, сколько единиц в стаке, вплоть до вместимости предмета. В отличие "
-             "от дублирования свободная клетка не нужна. То, что игра никогда не стакала, "
-             "стаком не становится.\n", "bullet"),
-            ("  - Починить до... -> как новое: ", "highlight"),
-            ("Галочка в этом окне делает обратное установке значения: она убирает состояние, "
-             "отметку о том, с чем предмет пришёл, и заряды. Именно это игра считает новым "
-             "состоянием — починка до максимума остаётся починкой, потому что игра хранит "
-             "запись о том, что предмет был повреждён.\n", "bullet"),
-            ("  - Навесное...: ", "highlight"),
-            ("Ставит части на предмет и снимает их обратно. Окно показывает слоты этого "
-             "предмета с тем, что в них стоит, и ваши предметы, на которые он подходит — "
-             "только ту половину, которая применима. Свободный слот предлагает ровно те "
-             "части, которые игра там допускает, из того, что у вас есть. Слоты есть у "
-             "оружия, частей оружия, частей тела и шлемов. Сохранённый размер носителя не "
-             "меняется — выросшее оружие может занять в контейнере больше места.\n",
-             "bullet"),
-            ("  - Информация о предмете (Ctrl+I): ", "highlight"),
-            ("Всё, что известно о предмете, только для чтения: цена, вес, размер, что даёт "
-             "переработка на каждом уровне модуля — доступный вашему переработчику отмечен — "
-             "и в каких рецептах предмет является ингредиентом. Для оружия — ещё и "
-             "подходящие патроны и точки крепления в виде дерева: дульное устройство "
-             "ставится на ствол, ствол в ресивер, ресивер в оружие. И не только оружие: у "
-             "частей тела и шлемов слоты тоже есть — рука показывает гидравлику и структуру, "
-             "шлем своё забрало. Откройте забрало — оно назовёт шлем.\n", "bullet"),
-            ("  - Удалить предмет (Del): ", "highlight"),
-            ("Удаляет предмет вместе со всем, что к нему присоединено. Чтобы снять только "
-             "одно вложение, разверните предмет и нажмите правой кнопкой по строке самого "
-             "вложения. Вкладки склада и корневые контейнеры удалить нельзя - они часть "
-             "структуры сохранения, а не предметы.\n\n\n", "bullet"),
-            
-            ("★ СПАВН ПРЕДМЕТОВ (КАТАЛОГ) ★\n\n", "header"),
-            ("• Поиск и фильтрация: ", "bullet"),
-            ("Фильтруйте по категориям или ищите предметы по названию (фокус с помощью ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Включите ", "bullet"),
-            ("Цвета категорий", "highlight"),
-            (" для подсветки или флажок ", "bullet"),
-            ("Только новые", "highlight"),
-            (" после обновления имен, чтобы увидеть новинки.\n", "bullet"),
-            ("• Спавн предметов: ", "bullet"),
-            ("Щёлкните предмет в списке правой кнопкой и выберите ", "bullet"),
-            ("Добавить в инвентарь...", "highlight"),
-            (". Одно окно спрашивает сколько, куда и - у предметов, которые его имеют - "
-             "с каким состоянием они появятся. При максимуме предмет создаётся идеальным: "
-             "именно так игра хранит нетронутый предмет.\n", "bullet"),
-            ("• Оружие в сборе: ", "bullet"),
-            ("Правый клик по огнестрельному оружию и ", "bullet"),
-            ("Создать в сборе...", "highlight"),
-            (" выдаёт его таким, каким его собирает сама игра: магазин, ствол, приклад и "
-             "прицел уже стоят в слотах. Такая сборка есть у 53 единиц оружия, у некоторых "
-             "несколько — тогда вы выбираете вариант и видите, что несёт каждый. Входящие "
-             "здесь не предлагаются: доставка оружия с частями почтой не проверена.\n",
-             "bullet"),
-            ("• Нужно место: ", "bullet"),
-            ("сколько места занимает оружие в сборе, игра считает сама, а то, что не может "
-             "разместить, отправляет в почтовый ящик. Поэтому редактор держит свободным "
-             "максимальный размер оружия: маленькая сумка отклоняется сразу, а полный отсек "
-             "отвечает «нет места» вместо того, чтобы создать предмет, который придёт "
-             "письмом.\n", "bullet"),
-            ("• Превышение размера оружия и почта: ", "bullet"),
-            ("17 из 53 вариантов собранного оружия со всеми обвесами превышают стандартные размеры сетки. Движок игры обрабатывает негабаритное оружие, отправляя его в почтовый ящик при загрузке. Редактор резервирует полную расширенную площадь оружия, исключая перекрытия.\n", "bullet"),
-            ("• Куда попадёт: ", "bullet"),
-            ("В списке указан каждый контейнер со свободным местом. Там ищется свободная ячейка; поворот на 90° — только если иначе не влезает.\n", "bullet"),
-            ("• Входящие: ", "bullet"),
-            ("Доступно всегда, даже когда всё заполнено. Предмет сохраняется без позиции, и игра выдаёт его письмом.\n", "bullet"),
-            ("• Оружие занимает больше, чем кажется: ", "bullet"),
-            ("винтовка 2x1 может блокировать 6x2. Редактор резервирует всю площадь.\n", "bullet"),
-            ("• Продажа у торговца: ", "bullet"),
-            ("Правый щелчок, затем ", "bullet"),
-            ("Предложить у торговца...", "highlight"),
-            (" помещает предмет в существующий слот предложения торговца по вашей цене. "
-             "Следующее обновление ассортимента отменит это; тот же диалог может отменить раньше.\n\n\n", "bullet"),
-
-            ("★ РЕДАКТОР ПОЧТОВОГО ЯЩИКА ★\n\n", "header"),
-            ("• Просмотр и чтение: ", "bullet"),
-            ("Проверяйте сообщения, отправителей, статус прочтения и прикрепленные награды.\n", "bullet"),
-            ("• Удалить письмо: ", "bullet"),
-            ("Выберите письмо и нажмите ", "bullet"),
-            ("Удалить выбранное письмо", "highlight"),
-            (" для его безвозвратного удаления.\n\n\n", "bullet"),
-
-            ("★ КВЕСТЫ ★\n\n", "header"),
-            ("• Что показывает вкладка: ", "bullet"),
-            ("Все квесты игры против тех, что встречались в вашем сохранении - по группам "
-             "и по статусу: активные, завершённые и ни разу не встреченные. Ветки "
-             "«ни разу» раскрыты сразу. Выберите квест, чтобы увидеть полный текст, "
-             "что он требует, кто его присылает и что даёт.\n", "bullet"),
-            ("• Поиск: ", "bullet"),
-            ("Поле над деревом ищет по названию квеста, тексту задания, отправителю, группе "
-             "и внутреннему идентификатору (фокус с ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). То, что осталось, показывается раскрытым. Пустое поле возвращает весь "
-             "список.\n", "bullet"),
-            ("• Руководство сообщества: ", "bullet"),
-            ("Нажмите кнопку ", "bullet"),
-            ("Community guide ↗", "highlight"),
-            (" на панели, чтобы открыть руководство игроков в браузере.\n", "bullet"),
-            ("• Только для просмотра: ", "bullet"),
-            ("Здесь ничего не записывается. Прогресса активного квеста в сохранении нет "
-             "вообще - есть только его цель, поэтому показать его тоже нельзя.\n\n\n",
-             "bullet"),
-
-            ("★ КРАФТ ★\n\n", "header"),
-            ("• Что показывает вкладка: ", "bullet"),
-            ("Каждый рецепт верстаков игры, сгруппированный по модулю убежища и по уровню, "
-             "который этот модуль требует. В строке — что даёт, что требует, сколько идёт и "
-             "можно ли начать сейчас. При выборе панель снизу перечисляет каждый ингредиент "
-             "как в наличии / нужно и выделяет то, чего не хватает.\n", "bullet"),
-            ("• Поиск: ", "bullet"),
-            ("Поле над деревом ищет по модулю, названию рецепта и тому, что он даёт - а ещё "
-             "по тому, что он расходует, так что ввод ингредиента отвечает на вопрос «а что "
-             "с этим вообще можно сделать?» (фокус с ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            ("). Совпадения показываются раскрытыми.\n", "bullet"),
-            ("• Ещё нет в игре: ", "bullet"),
-            ("Некоторые рецепты требуют уровня верстака, для которого в игре нет шага "
-             "постройки: 3D-принтер заканчивается на уровне 1 и несёт рецепты для 2 и 3. Они "
-             "помечены, а не показаны как доступные.\n", "bullet"),
-            ("• Переработка — в другом месте: ", "bullet"),
-            ("Это тот же список рецептов со стороны предмета, поэтому он в информации о "
-             "предмете, где предмет у вас в руках. Только просмотр, как вкладка квестов.\n\n\n",
-             "bullet"),
-
-            ("★ ☢ ЛАБОРАТОРИЯ ХАКЕРА ☢ ★\n\n", "header"),
-            ("• Настройки профиля: ", "bullet"),
-            ("Редактируйте никнейм, уровень и опыт в левой панели.\n", "bullet"),
-            ("Там же свободные очки навыков - они намеренно без предела, а вот уровень ограничен 25. Вкладка Статистика показывает сессии, последний рейд и общие итоги аккаунта, только для просмотра.\n", "bullet"),
-            ("Сначала задайте уровень, потом опыт, если он вам нужен: смена уровня обнуляет его, поэтому в обратном порядке ввод пропадёт. Больше, чем на единицу ниже цели следующего уровня, ввести нельзя - ровно на ней вы бы поднялись. Число рядом с полем - его предел.\n", "bullet"),
-            ("• Навыки персонажа: ", "bullet"),
-            ("Выберите навык из списка, введите уровень и нажмите ", "bullet"),
-            ("Задать уровень", "highlight"),
-            (". В списке показаны уровень и максимум: у каждого навыка свой предел из данных игры - бой заканчивается на 6, взлом на 5. Более высокие значения отклоняются, потому что игра их не примет.\n", "bullet"),
-            ("• Управление торговцами: ", "bullet"),
-            ("Выберите торговца, измените его уровень или баланс и нажмите ", "bullet"),
-            ("Задать параметры", "highlight"),
-            (".\n", "bullet"),
-            ("• Читы: ", "bullet"),
-            ("Пять кнопок в один клик. ", "bullet"),
-            ("Макс. все навыки", "highlight"),
-            (" и ", "bullet"),
-            ("Заполнить баланс торговцев", "highlight"),
-            (" (по 1 000 000) делают ровно то, что написано. ", "bullet"),
-            ("Починить все вещи", "highlight"),
-            (" доводит всё до максимума, а ", "bullet"),
-            ("Всё как новое", "highlight"),
-            (" вместо этого убирает саму запись об износе и идёт дальше: сохранение потом "
-             "читается как ни разу не использованное. ", "bullet"),
-            ("Заполнить все стаки", "highlight"),
-            (" доводит каждый стак до вместимости самой вещи. Последние два сначала "
-             "спрашивают, а потом сообщают, скольких вещей коснулись; до применения ничего "
-             "не записывается.\n\n\n", "bullet"),
-
-            ("★ RAW JSON ★\n\n", "header"),
-            ("• Что показывает вкладка: ", "bullet"),
-            ("Полный отформатированный JSON загруженного в память сохранения. Отображает "
-             "как сохранённые, так и ожидающие применения изменения с точными ID, числами и структурой.\n",
-             "bullet"),
-            ("• Поиск: ", "bullet"),
-            ("Полнотекстовый поиск без учёта регистра со счётчиком совпадений и "
-             "навигацией вперёд / назад (Enter / Shift+Enter). Быстрый переход по ", "bullet"),
-            ("Ctrl+F", "highlight"),
-            (".\n", "bullet"),
-            ("• Перенос строк и копирование: ", "bullet"),
-            ("Переключение переноса строк для удобного чтения без горизонтальной прокрутки, "
-             "или копирование всего JSON в буфер обмена одной кнопкой. Только чтение.\n\n\n",
-             "bullet"),
-
-            ("★ ГОРЯЧИЕ КЛАВИШИ ★\n\n", "header"),
-            ("• Глобальные комбинации: ", "bullet"),
-            ("Доступны во всём главном окне:\n", "bullet"),
-            ("  - Ctrl+S: ", "highlight"),
-            ("Применить изменения и сохранить файл (показывает список изменений и создаёт резервную копию).\n", "bullet"),
-            ("  - Ctrl+F: ", "highlight"),
-            ("Перейти в поле поиска активной вкладки (Инвентарь, Каталог, Квесты, Крафт или Raw JSON).\n", "bullet"),
-            ("• Комбинации в дереве инвентаря: ", "bullet"),
-            ("Работают при навигации по предметам:\n", "bullet"),
-            ("  - Shift+Клик / Ctrl+Клик: ", "highlight"),
-            ("Выделяет диапазон или переключает отдельные предметы для массовых действий.\n", "bullet"),
-            ("  - Del: ", "highlight"),
-            ("Удалить выбранные предметы со всеми навесками.\n", "bullet"),
-            ("  - Ctrl+D: ", "highlight"),
-            ("Дублировать выбранные предметы.\n", "bullet"),
-            ("  - Ctrl+R: ", "highlight"),
-            ("Починить выбранные предметы до 100% прочности.\n", "bullet"),
-            ("  - Ctrl+M: ", "highlight"),
-            ("Переместить выбранные предметы в другой контейнер.\n", "bullet"),
-            ("  - Ctrl+I: ", "highlight"),
-            ("Открыть окно детальной информации о предмете.\n", "bullet"),
-            ("  - Ctrl+A: ", "highlight"),
-            ("Выделить все видимые строки в текущем контейнере.\n", "bullet"),
-            ("• Навигация в Raw JSON: ", "bullet"),
-            ("При поиске в Raw JSON нажмите ", "bullet"),
-            ("Enter", "highlight"),
-            (" для перехода к следующему совпадению или ", "bullet"),
-            ("Shift+Enter", "highlight"),
-            (" для перехода к предыдущему совпадению.\n\n\n", "bullet"),
-
-            ("★ СОХРАНЕНИЕ ИЗМЕНЕНИЙ ★\n\n", "header"),
-            ("• Применить изменения: ", "bullet"),
-            ("Нажмите ", "bullet"),
-            ("Применить изменения", "highlight"),
-            (" (или нажмите ", "bullet"),
-            ("Ctrl+S", "highlight"),
-            (") в правом верхнем углу для сохранения файла. Сначала показывается список того, "
-             "что будет записано: каждый новый предмет, каждый удалённый, каждое изменённое поле со значением до и после — и ждёт "
-             "подтверждения. При отмене ничего не записывается. Сравнение идёт с файлом на диске, поэтому видно и то, что изменила сама игра.\n", "bullet"),
-            ("• Сбросить изменения: ", "bullet"),
-            ("Нажмите ", "bullet"),
-            ("Сбросить изменения", "highlight"),
-            (" для отмены всех несохраненных изменений.\n", "bullet"),
-            ("• Резервные копии: ", "bullet"),
-            ("Каждое применение сначала копирует сохранение с отметкой времени в папку ", "bullet"),
-            ("backups", "highlight"),
-            (" рядом с программой. Там ничего никогда не перезаписывается. ", "bullet"),
-            ("Хранить копий", "highlight"),
-            (" в правом нижнем углу задаёт, сколько копий остаётся: как только будет "
-             "записана следующая, всё более старое сверх этого числа удаляется. "
-             "Значение 0 сохраняет все копии.\n", "bullet"),
-            ("• Возврат: ", "bullet"),
-            ("Восстановить копию...", "highlight"),
-            (" ставит копию на место сохранения. Текущее сохранение сначала копируется "
-             "в сторону, так что и само восстановление обратимо. В папке ничего не "
-             "удаляется, а файл, который редактор не создавал, не предлагается вовсе.\n",
-             "bullet"),
-            ("• Элементы строки состояния: ", "bullet"),
-            ("В нижней панели находятся переключатель фоновой синтвейв-музыки (", "bullet"),
-            ("🔇 / 🔊", "highlight"),
-            ("), переключатель языка (US, DE, RU) и счетчик хранения резервных копий. Значение 0 в поле ", "bullet"),
-            ("Хранить копий", "highlight"),
-            (" гарантирует постоянное сохранение всех созданных ранее бэкапов.\n\n\n", "bullet"),
-
-            ("★ ПОДДЕРЖАТЬ ПРОЕКТ ★\n\n", "header"),
-            ("• Поддержать на Ko-fi: ", "bullet"),
-            ("Если вам нравится этот бесплатный редактор, вы можете поддержать разработку по ссылке:\n", "bullet"),
-            ("https://ko-fi.com/sirnr1\n", "link"),
-        ]
         
-        # Determine current language and populate text area
-        lang = self.current_lang if hasattr(self, "current_lang") else self._get_system_language()
-        if lang == "de":
-            help_text = self.help_text_de
-        elif lang == "ru":
-            help_text = self.help_text_ru
-        else:
-            help_text = self.help_text_en
-
-        for text, tag in help_text:
-            self.help_text_area.insert("end", text, tag)
-            
-        self.help_text_area.configure(state="disabled")
+        self._populate_help_text()
 
     def _build_char_tab(self, parent: ttk.Frame) -> None:
+        """Builds Hackerman's Lab: a toolbar strip, then two columns side by side.
+
+        What is left here is the only thing the blocks below have in common - the two
+        panes. They share nothing else: each block builds into one of them and hangs its
+        widgets on `self`, so the panes are passed in as arguments rather than kept as
+        attributes nobody would read again. The three subnotebook pages read
+        `self.tab_skills` / `_traders` / `_counters`, which the pane before them creates,
+        so their order is the one they had.
+        """
+        self._build_char_toolbar(parent)
+
+        # Create left pane for warning, profile, and cheats
+        left_pane = ttk.Frame(parent)
+        left_pane.pack(side="left", fill="both", expand=False, padx=10, pady=10)
+
+        # Create right pane for skills/traders notebook
+        right_pane = ttk.Frame(parent)
+        right_pane.pack(side="right", fill="both", expand=True, padx=10, pady=10)
+
+        self._build_char_warning_banner(left_pane)
+        self._build_char_profile_frame(left_pane)
+        self._build_char_cheats_frame(left_pane)
+        self._build_char_subnotebook(right_pane)
+        self._build_skills_pane()
+        self._build_traders_pane()
+        self._build_counters_pane()
+
+    def _build_char_toolbar(self, parent: ttk.Frame) -> None:
+        """The tab's own Apply/Discard pair, above both columns.
+
+        Its own method because it is the one thing on this tab that is not in a column,
+        and because the pack order is load-bearing: it takes the top strip only as long as
+        it is packed before the panes, which is why it is the first call in the builder.
+        The pair is a separate widget instance from every other tab's - a Tk widget has one
+        parent - and is registered in `apply_buttons`/`discard_buttons` elsewhere.
+        """
         # Packed before the panes so it claims the top strip.
         char_toolbar = ttk.Frame(parent)
         char_toolbar.pack(side="top", fill="x", padx=10, pady=(10, 0))
@@ -4402,14 +3801,13 @@ class SaveEditorGUI:
         )
         self.char_apply_button.pack(side="right")
 
-        # Create left pane for warning, profile, and cheats
-        left_pane = ttk.Frame(parent)
-        left_pane.pack(side="left", fill="both", expand=False, padx=10, pady=10)
+    def _build_char_warning_banner(self, left_pane: ttk.Frame) -> None:
+        """Block 1: the red banner that says this tab can brick a save.
 
-        # Create right pane for skills/traders notebook
-        right_pane = ttk.Frame(parent)
-        right_pane.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
+        Stands alone because it is the only part of the window built from raw `tk` widgets
+        rather than `ttk` - a themed label cannot carry its own background - so the three
+        colours and the wrap width live here and nowhere else.
+        """
         # 1. Warning Banner Frame
         self.warning_frame = tk.Frame(
             left_pane,
@@ -4439,7 +3837,7 @@ class SaveEditorGUI:
             self.warning_frame,
             text="",
             font=("TkDefaultFont", 9),
-            fg="#ffffff",
+            fg=COLOR_WHITE,
             bg="#4a1515",
             justify="left",
             anchor="w",
@@ -4449,6 +3847,14 @@ class SaveEditorGUI:
         )
         self.warning_desc.pack(fill="x")
 
+    def _build_char_profile_frame(self, left_pane: ttk.Frame) -> None:
+        """Block 2: nickname, level, XP and unspent skill points.
+
+        One method because it is one grid - four rows of label, field and a hint in the
+        third column - and because all four fields share one trace, `_on_char_profile_changed`.
+        A field added here without that trace stages nothing, which is the mistake this
+        block being one piece makes visible.
+        """
         # 2. Profile Details Frame
         self.profile_lf = ttk.LabelFrame(left_pane, padding=10)
         self.profile_lf.pack(fill="x", pady=(0, 10))
@@ -4505,6 +3911,14 @@ class SaveEditorGUI:
             self.profile_lf, textvariable=self.char_skill_points_var, width=10)
         self.skill_points_entry.grid(row=3, column=1, sticky="w", padx=5, pady=5)
 
+    def _build_char_cheats_frame(self, left_pane: ttk.Frame) -> None:
+        """Block 3: the five cheat buttons, in two columns.
+
+        Kept together because the layout is a measurement, not a preference: five stacked
+        buttons run past the bottom of the pane at the window's minimum size in German, so
+        the two `uniform` columns and the last button's `columnspan` belong to the same
+        decision as the buttons themselves.
+        """
         # 3. Cheats Frame
         self.cheats_lf = ttk.LabelFrame(left_pane, padding=10)
         self.cheats_lf.pack(fill="x")
@@ -4529,6 +3943,14 @@ class SaveEditorGUI:
         self.cheat_fill_trader_btn = ttk.Button(self.cheats_lf, command=self._cheat_fill_trader_balances)
         self.cheat_fill_trader_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
 
+    def _build_char_subnotebook(self, right_pane: ttk.Frame) -> None:
+        """Block 4: the right column's notebook and its three empty pages.
+
+        Separate from the three panes that fill them because it is what fixes their
+        **order**: `_update_ui_language` addresses these pages by index (`right_nb.tab(0)`
+        to `(2)`), so adding a page anywhere but at the end moves a caption onto the wrong
+        one. The pages are created empty and filled by the three builders after it.
+        """
         # 4. Right Pane Subnotebook (Skills & Traders)
         self.right_nb = ttk.Notebook(right_pane)
         self.right_nb.pack(fill="both", expand=True)
@@ -4541,6 +3963,14 @@ class SaveEditorGUI:
         self.right_nb.add(self.tab_traders, text="")
         self.right_nb.add(self.tab_counters, text="")
 
+    def _build_skills_pane(self) -> None:
+        """The Skills page: a scrolled list over a row of level controls.
+
+        Its own method because it is a page of the subnotebook, built into
+        `self.tab_skills` - it needs no argument, since the pane before it stored the page
+        it fills. The three controls at the bottom are one measured set: same width, same
+        rendered height, and the spinbox arrows as the only stepper.
+        """
         # Skills Layout
         skills_tree_frame = ttk.Frame(self.tab_skills)
         skills_tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -4601,6 +4031,14 @@ class SaveEditorGUI:
                                         command=self._set_selected_skill_level)
         self.set_skill_btn.pack(side="left")
 
+    def _build_traders_pane(self) -> None:
+        """The Traders page: the same shape as the skills page, plus a balance field.
+
+        Deliberately not shared with `_build_skills_pane` although the top halves look
+        alike: the columns differ, three of the five are hidden by `displaycolumns`, and
+        the level spinbox reads its ceiling from the extraction report. A common builder
+        would take every one of those as an argument and read worse than the two do.
+        """
         # Traders Layout
         traders_tree_frame = ttk.Frame(self.tab_traders)
         traders_tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -4670,6 +4108,13 @@ class SaveEditorGUI:
         self.set_trader_btn = ttk.Button(traders_control_frame, command=self._set_selected_trader_stats)
         self.set_trader_btn.pack(side="left", padx=5)
 
+    def _build_counters_pane(self) -> None:
+        """The Counters page: the account's own tallies, read-only.
+
+        The shortest of the three and the only one with no control row at all, which is
+        the reason it is a block of its own rather than a variant of the other two -
+        nothing here writes, so there is nothing to stage and no Apply to reach.
+        """
         # Counters Layout - read-only. Nothing in here changes what the game does; it is the
         # account's own record of sessions, kills, distance and loot.
         counters_tree_frame = ttk.Frame(self.tab_counters)
@@ -4769,8 +4214,8 @@ class SaveEditorGUI:
             detail_frame,
             height=7,
             wrap="word",
-            bg="#252526",
-            fg="#d4d4d4",
+            bg=COLOR_PANEL,
+            fg=COLOR_TEXT,
             relief="flat",
             padx=8,
             pady=6,
@@ -4778,7 +4223,7 @@ class SaveEditorGUI:
         )
         detail_scroll.configure(command=self.quest_detail.yview)
         self.quest_detail.pack(side="left", fill="both", expand=True)
-        self.quest_detail.tag_configure("field", foreground="#3794ff")
+        self.quest_detail.tag_configure("field", foreground=COLOR_ACCENT)
         self.quest_detail.tag_configure("dim", foreground="#9a9a9a")
         self.quest_detail.configure(state="disabled")
 
@@ -5027,8 +4472,7 @@ class SaveEditorGUI:
         """Writes the two ceilings beside their fields. Skill points get none on purpose -
         they have no ceiling, and the missing hint is the difference made visible."""
         self.level_max_lbl.configure(text=f"/ {self._max_level_for_account()}")
-        top = self._max_xp_for_level(
-            self.manager.data.get("AccountDto", {}).get("ExperienceDto", {}).get("Level", 0))
+        top = self._max_xp_for_level(self.manager.get_experience().get("Level", 0))
         self.xp_goal_lbl.configure(text="" if top is None else f"/ {top}")
 
     def _snap_char_level(self, _event=None) -> None:
@@ -5042,7 +4486,7 @@ class SaveEditorGUI:
         try:
             level = int(self.char_level_var.get())
         except ValueError:
-            level = self.manager.data.get("AccountDto", {}).get("ExperienceDto", {}).get("Level", 0)
+            level = self.manager.get_experience().get("Level", 0)
         snapped = max(0, min(ceiling, int(level)))
         if self.char_level_var.get() != str(snapped):
             self.char_level_var.set(str(snapped))
@@ -5065,7 +4509,7 @@ class SaveEditorGUI:
         matter in a way nobody should have to think about. Set the level, then the XP - which
         is what the Help tab says.
         """
-        exp_dto = self.manager.data.setdefault("AccountDto", {}).setdefault("ExperienceDto", {})
+        exp_dto = self.manager.get_experience(create=True)
         top = self._max_xp_for_level(exp_dto.get("Level", 0))
         try:
             xp = max(0, int(self.char_xp_var.get()))
@@ -5083,8 +4527,8 @@ class SaveEditorGUI:
         if getattr(self, "_updating_char_fields", False):
             return
 
-        account_dto = self.manager.data.setdefault("AccountDto", {})
-        exp_dto = account_dto.setdefault("ExperienceDto", {})
+        account_dto = self.manager.get_account(create=True)
+        exp_dto = self.manager.get_experience(create=True)
 
         nickname = self.char_nickname_var.get()
         account_dto["Nickname"] = nickname
@@ -5143,7 +4587,7 @@ class SaveEditorGUI:
     def _refresh_char_tab(self) -> None:
         self._updating_char_fields = True
 
-        account_dto = self.manager.data.get("AccountDto", {})
+        account_dto = self.manager.get_account()
         nickname = account_dto.get("Nickname", "")
         self.char_nickname_var.set(nickname)
 
@@ -5196,7 +4640,7 @@ class SaveEditorGUI:
         for item in self.skills_tree.get_children():
             self.skills_tree.delete(item)
 
-        skills_list = self.manager.data.get("AccountDto", {}).get("SkillsDto", {}).get("Skills", [])
+        skills_list = self.manager.get_skills()
         all_skill_ids = self._active_skill_ids()
 
         save_levels = {}
@@ -5234,7 +4678,7 @@ class SaveEditorGUI:
         for item in self.counters_tree.get_children():
             self.counters_tree.delete(item)
 
-        counters = (self.manager.data.get("AccountDto", {}).get("Counters", {}) or {})
+        counters = self.manager.get_counters()
         groups = counters.get("Counters")
         if not isinstance(groups, list):
             groups = []
@@ -5265,14 +4709,14 @@ class SaveEditorGUI:
         for item in self.traders_tree.get_children():
             self.traders_tree.delete(item)
 
-        shops_list = self.manager.data.get("AccountShops", [])
+        shops_list = self.manager.get_shops()
         for shop in shops_list:
             instance_id = shop.get("Id")
             template_id = shop.get("ShopTemplateId")
             trader_level = shop.get("AccountLevel", 1)
 
             balance_dict = shop.get("Balance", {})
-            currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
+            currency_key = CREDITS_TEMPLATE_ID
             balance = balance_dict.get(currency_key, 0)
 
             trader_name = self.traders_name_map.get(template_id, "Unknown Trader")
@@ -5283,7 +4727,7 @@ class SaveEditorGUI:
                 values=(instance_id, template_id, trader_name, trader_level, balance)
             )
 
-    def _on_skill_selected(self, event=None) -> None:
+    def _on_skill_selected(self, _event=None) -> None:
         selected = self.skills_tree.selection()
         if not selected:
             return
@@ -5294,7 +4738,7 @@ class SaveEditorGUI:
             self.skill_level_var.set(str(values[2]).split("/")[0].strip())
             self.skill_spin.configure(to=self._max_level_for_skill(int(values[0])))
 
-    def _on_trader_selected(self, event=None) -> None:
+    def _on_trader_selected(self, _event=None) -> None:
         selected = self.traders_tree.selection()
         if not selected:
             return
@@ -5313,7 +4757,7 @@ class SaveEditorGUI:
     def _write_skill_level(self, skill_id: int, new_level: int) -> None:
         """Stages the level, refills the readout and puts the selection back on the row."""
         t = TRANSLATIONS[self.current_lang]
-        skills_list = self.manager.data.setdefault("AccountDto", {}).setdefault("SkillsDto", {}).setdefault("Skills", [])
+        skills_list = self.manager.get_skills(create=True)
         skill_item = next((s for s in skills_list if s.get("Id") == skill_id), None)
         if not skill_item:
             skill_item = {"Id": skill_id}
@@ -5462,13 +4906,12 @@ class SaveEditorGUI:
         except ValueError:
             new_balance = None
 
-        shops_list = self.manager.data.setdefault("AccountShops", [])
-        shop = next((s for s in shops_list if s.get("Id") == trader_id), None)
+        shop = self.manager.get_shop(trader_id)
         if not shop:
             messagebox.showerror(t["title"], f"Trader {trader_id} not found in save data.")
             return
 
-        currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
+        currency_key = CREDITS_TEMPLATE_ID
         # Refused above the cap rather than clamped, like the level field above: the game
         # cuts the balance down to its template's ShopBalance on load (confirmed in-game
         # 2026-07-28 - wrote a million, read 500000 back), so a bigger number in the save
@@ -5501,8 +4944,7 @@ class SaveEditorGUI:
             if repair_item_logic(item, self._template_max_durability_for_item(item)):
                 repaired_count += 1
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
 
         messagebox.showinfo(
             t["msg_success_title"],
@@ -5535,8 +4977,7 @@ class SaveEditorGUI:
                                 parent=self.root)
             return
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         messagebox.showinfo(
             t["msg_success_title"],
             t["msg_cheats_mint"].format(count=cleared),
@@ -5553,9 +4994,7 @@ class SaveEditorGUI:
         t = TRANSLATIONS[self.current_lang]
         filled = units = 0
         for item in self.manager.get_all_items_flat():
-            inner = (item.get("AdditionalData") or {}).get("_data")
-            if not isinstance(inner, dict):
-                continue
+            inner = item_data(item)
             quantity = inner.get("StackableComponent_quantity")
             if not isinstance(quantity, int) or isinstance(quantity, bool):
                 continue
@@ -5571,8 +5010,7 @@ class SaveEditorGUI:
                                 parent=self.root)
             return
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         messagebox.showinfo(t["msg_success_title"],
                             t["msg_cheats_stacks"].format(count=filled, units=units),
                             parent=self.root)
@@ -5581,7 +5019,7 @@ class SaveEditorGUI:
 
     def _cheat_max_skills(self) -> None:
         t = TRANSLATIONS[self.current_lang]
-        skills_list = self.manager.data.setdefault("AccountDto", {}).setdefault("SkillsDto", {}).setdefault("Skills", [])
+        skills_list = self.manager.get_skills(create=True)
         active_ids = self._active_skill_ids()
         for s_id in active_ids:
             skill_item = next((s for s in skills_list if s.get("Id") == s_id), None)
@@ -5605,10 +5043,10 @@ class SaveEditorGUI:
 
     def _cheat_fill_trader_balances(self) -> None:
         t = TRANSLATIONS[self.current_lang]
-        shops_list = self.manager.data.setdefault("AccountShops", [])
+        shops_list = self.manager.get_shops()
         trader_count = len(shops_list)
 
-        currency_key = "cb567810-cc82-424f-893f-299c704ffb12"
+        currency_key = CREDITS_TEMPLATE_ID
         for shop in shops_list:
             shop["AccountLevel"] = self._max_level_for_account()
             balance_dict = shop.setdefault("Balance", {})
@@ -5826,28 +5264,22 @@ class SaveEditorGUI:
         return {}
 
     def _load_template_name_map(self) -> None:
-        self.manual_alias_map = self._load_manual_aliases()
-        self.npc_name_map = {}
-        self.game_item_catalog = []
-        self.game_item_meta_by_template_id = {}
-        self.skills_name_map = dict(SKILL_NAMES)
-        self.skills_meta = {}
-        self.shops_meta = {}
-        self.max_account_level = TRADER_LEVEL_MAX_FALLBACK
-        self.level_progress = {}
-        self.quests_meta = {}
-        self.craft_meta = {}
-        self.crafting_meta = {}
-        self.presets_meta = []
-        self.traders_name_map = dict(TRADER_NAMES)
+        """Fills every name and meta field from the first usable extraction report.
+
+        What stays here is the part that cannot be moved out: which candidate wins, and
+        the rule that makes that decision safe - a candidate contributes everything or
+        nothing. Every `continue` above happens before the first write, so a report that
+        turns out to be unusable leaves the defaults from `_reset_template_name_state`
+        rather than half of itself. The blocks that read one section of the report each
+        follow below.
+        """
+        self._reset_template_name_state()
 
         for path in self._mapping_candidates():
             if not path.exists():
                 continue
-            try:
-                with path.open("r", encoding="utf-8") as f:
-                    report = json.load(f)
-            except Exception:
+            report = self._read_mapping_report(path)
+            if report is None:
                 continue
 
             mapping = report.get("mapping", [])
@@ -5863,101 +5295,16 @@ class SaveEditorGUI:
             if not mapping and not has_catalog:
                 continue
 
-            npc_mapping = report.get("npc_name_mapping", {})
-            if isinstance(npc_mapping, dict):
-                for npc_id, npc_name in npc_mapping.items():
-                    if not isinstance(npc_id, str) or not isinstance(npc_name, str):
-                        continue
-                    npc_id = npc_id.strip().lower()
-                    npc_name = npc_name.strip()
-                    if npc_id and npc_name:
-                        self.npc_name_map[npc_id] = npc_name
-
-            skills_mapping = report.get("skills_mapping", {})
-            meta = report.get("skills_meta")
-            if isinstance(meta, dict):
-                self.skills_meta = meta
-            if isinstance(skills_mapping, dict):
-                for k, v in skills_mapping.items():
-                    self.skills_name_map[str(k)] = str(v)
-
-            trader_mapping = report.get("trader_mapping", {})
-            if isinstance(trader_mapping, dict):
-                for k, v in trader_mapping.items():
-                    self.traders_name_map[str(k)] = str(v)
-
-            shops_meta = report.get("shops_meta")
-            if isinstance(shops_meta, dict):
-                self.shops_meta = shops_meta
-            max_level = report.get("max_account_level")
-            if isinstance(max_level, int) and max_level > 0:
-                self.max_account_level = max_level
-            level_progress = report.get("level_progress")
-            if isinstance(level_progress, dict):
-                self.level_progress = level_progress
-
-            quests_meta = report.get("quests_meta")
-            if isinstance(quests_meta, dict):
-                self.quests_meta = {
-                    str(k).strip().lower(): v
-                    for k, v in quests_meta.items()
-                    if isinstance(v, dict)
-                }
-
-            craft_meta = report.get("craft_meta")
-            if isinstance(craft_meta, dict):
-                self.craft_meta = craft_meta
-
-            crafting_meta = report.get("crafting_meta")
-            if isinstance(crafting_meta, dict):
-                self.crafting_meta = crafting_meta
-
-            presets_meta = report.get("presets_meta")
-            if isinstance(presets_meta, list):
-                # Keyed lookups happen per template, so the roots are lowercased once here
-                # rather than at every call site.
-                self.presets_meta = [
-                    dict(row, root=str(row.get("root") or "").strip().lower())
-                    for row in presets_meta
-                    if isinstance(row, dict) and row.get("root")
-                ]
-
-            item_catalog = report.get("item_catalog", [])
-            if isinstance(item_catalog, list):
-                for row in item_catalog:
-                    if not isinstance(row, dict):
-                        continue
-                    template_id = row.get("template_id")
-                    if not isinstance(template_id, str):
-                        continue
-                    template_id = template_id.strip().lower()
-                    if not template_id:
-                        continue
-                    self.game_item_catalog.append(row)
-                    self.game_item_meta_by_template_id[template_id] = row
-
-            # Names come from `item_catalog` (`name`), which the app reads anyway. Old
-            # reports carried the identical names a second time under `mapping`
-            # (`name_guess`) - measured name for name across all 1596 templates - which
-            # is why newer reports drop that block and old ones still load here.
-            loaded: dict[str, str] = {}
-
-            def harvest_names(rows: list, name_key: str) -> None:
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    tid = row.get("template_id")
-                    name = row.get(name_key)
-                    if not isinstance(tid, str) or not isinstance(name, str):
-                        continue
-                    name = name.strip()
-                    if not name:
-                        continue
-                    loaded[tid.lower()] = name
-
-            harvest_names(catalog_rows if has_catalog else [], "name")
-            if not loaded:
-                harvest_names(mapping, "name_guess")
+            self._apply_report_npc_names(report)
+            self._apply_report_skills(report)
+            self._apply_report_trader_meta(report)
+            self._apply_report_quest_and_craft_meta(report)
+            self._apply_report_presets(report)
+            self._apply_report_item_catalog(report)
+            # The one block that built a local instead of writing to `self`, so it hands
+            # `loaded` back here - the manual overrides are layered on top afterwards,
+            # which is what keeps them winning over the report.
+            loaded = self._template_names_from_report(mapping, catalog_rows, has_catalog)
 
             for key, value in self.manual_alias_map.items():
                 loaded[key] = value
@@ -5969,12 +5316,209 @@ class SaveEditorGUI:
                 self.last_game_path = game_path.strip()
             return
 
+        # **Kein Kandidat war brauchbar.** Nur `template_name_map` wird hier gesetzt: es ist
+        # das einzige Feld, das `_reset_template_name_state` nicht kennt. Alle anderen stehen
+        # dort schon auf ihrer Vorgabe, und jedes `continue` der Schleife oben liegt **vor**
+        # dem ersten Schreibzugriff - ein Kandidat schreibt also alles oder nichts. Fuenf
+        # weitere Zuweisungen standen hier bis zum 11.09.2026 und konnten nie etwas tun.
         self.template_name_map = dict(self.manual_alias_map)
+
+    def _reset_template_name_state(self) -> None:
+        """The opening block of `_load_template_name_map`: every field a report can fill,
+        back to its built-in default.
+
+        It stands on its own because it is the state contract of the load - the full list
+        of what a report reaches, in one place, so a new report section cannot be added
+        without its default beside it. Two of these are merges rather than blanks:
+        `skills_name_map` and `traders_name_map` start from the constants in this file, so
+        a report that names only some of them leaves the rest readable.
+        """
+        self.manual_alias_map = self._load_manual_aliases()
+        self.npc_name_map = {}
         self.game_item_catalog = []
         self.game_item_meta_by_template_id = {}
+        self.skills_name_map = dict(SKILL_NAMES)
+        self.skills_meta = {}
+        self.shops_meta = {}
+        self.max_account_level = TRADER_LEVEL_MAX_FALLBACK
+        self.level_progress = {}
+        self.quests_meta = {}
         self.craft_meta = {}
         self.crafting_meta = {}
         self.presets_meta = []
+        self.traders_name_map = dict(TRADER_NAMES)
+
+    def _read_mapping_report(self, path: Path) -> dict | None:
+        """Parses one candidate report; `None` says "not this file, try the next".
+
+        Its own method because that is the whole of it: the caller loops over candidates,
+        and returning `None` means exactly what the `continue` it replaces meant. The
+        broad `except` is the original one - a half-written or foreign file must not stop
+        the editor from starting. A file that parses to something other than an object
+        still comes back as it is and fails at the caller's first `.get`, unchanged from
+        before; no report has ever had that shape.
+        """
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _apply_report_npc_names(self, report: dict) -> None:
+        """The report's `npc_name_mapping` block.
+
+        Apart from the other name blocks because it normalises both halves of a pair
+        differently - the id lowercased because it is looked up against a save, the name
+        only trimmed - and because it drops a pair where either half is missing rather
+        than storing an empty label.
+        """
+        npc_mapping = report.get("npc_name_mapping", {})
+        if isinstance(npc_mapping, dict):
+            for npc_id, npc_name in npc_mapping.items():
+                if not isinstance(npc_id, str) or not isinstance(npc_name, str):
+                    continue
+                npc_id = npc_id.strip().lower()
+                npc_name = npc_name.strip()
+                if npc_id and npc_name:
+                    self.npc_name_map[npc_id] = npc_name
+
+    def _apply_report_skills(self, report: dict) -> None:
+        """The two skill blocks, `skills_mapping` and `skills_meta`.
+
+        Together and separate from the traders because the two halves of "skill" behave
+        differently: the names are merged **into** the built-in ones the reset put there,
+        while the meta replaces whatever was in it. Keeping both in one method is what
+        makes that difference visible.
+        """
+        skills_mapping = report.get("skills_mapping", {})
+        meta = report.get("skills_meta")
+        if isinstance(meta, dict):
+            self.skills_meta = meta
+        if isinstance(skills_mapping, dict):
+            for k, v in skills_mapping.items():
+                self.skills_name_map[str(k)] = str(v)
+
+    def _apply_report_trader_meta(self, report: dict) -> None:
+        """Everything the report says about traders: `trader_mapping`, `shops_meta`,
+        `max_account_level` and `level_progress`.
+
+        One method because Hackerman's Lab reads all four as one answer - a trader's level
+        is capped by `max_account_level`, and `level_progress` is where that ceiling is
+        read from - so a report missing one of them raises a question about this group
+        rather than about four unrelated fields.
+        """
+        trader_mapping = report.get("trader_mapping", {})
+        if isinstance(trader_mapping, dict):
+            for k, v in trader_mapping.items():
+                self.traders_name_map[str(k)] = str(v)
+
+        shops_meta = report.get("shops_meta")
+        if isinstance(shops_meta, dict):
+            self.shops_meta = shops_meta
+        max_level = report.get("max_account_level")
+        if isinstance(max_level, int) and max_level > 0:
+            self.max_account_level = max_level
+        level_progress = report.get("level_progress")
+        if isinstance(level_progress, dict):
+            self.level_progress = level_progress
+
+    def _apply_report_quest_and_craft_meta(self, report: dict) -> None:
+        """The three blocks the Quests and Crafting tabs live on: `quests_meta`,
+        `craft_meta` and `crafting_meta`.
+
+        Together because only the first of them is keyed and the contrast is the point:
+        quest ids are looked up against a save, so they are lowercased once here and rows
+        that are not objects are dropped, while the two craft blocks are handed on exactly
+        as the extractor grouped them - the recycling half and the workbench half.
+        """
+        quests_meta = report.get("quests_meta")
+        if isinstance(quests_meta, dict):
+            self.quests_meta = {
+                str(k).strip().lower(): v
+                for k, v in quests_meta.items()
+                if isinstance(v, dict)
+            }
+
+        craft_meta = report.get("craft_meta")
+        if isinstance(craft_meta, dict):
+            self.craft_meta = craft_meta
+
+        crafting_meta = report.get("crafting_meta")
+        if isinstance(crafting_meta, dict):
+            self.crafting_meta = crafting_meta
+
+    def _apply_report_presets(self, report: dict) -> None:
+        """The `presets_meta` block, the assembled weapons the spawner walks.
+
+        On its own because it is the one block that rewrites its rows on the way in rather
+        than storing them: a preset without a root is not a preset and is dropped here, so
+        no caller has to ask again.
+        """
+        presets_meta = report.get("presets_meta")
+        if isinstance(presets_meta, list):
+            # Keyed lookups happen per template, so the roots are lowercased once here
+            # rather than at every call site.
+            self.presets_meta = [
+                dict(row, root=str(row.get("root") or "").strip().lower())
+                for row in presets_meta
+                if isinstance(row, dict) and row.get("root")
+            ]
+
+    def _apply_report_item_catalog(self, report: dict) -> None:
+        """The `item_catalog` block, which fills two views of the same rows: the list the
+        catalog tab renders in order, and the by-template lookup everything else asks.
+
+        Its own method because those two must not drift apart - a row is appended to the
+        list and stored under its key in the same pass, so every template the catalog
+        shows is one the meta lookup can answer for.
+        """
+        item_catalog = report.get("item_catalog", [])
+        if isinstance(item_catalog, list):
+            for row in item_catalog:
+                if not isinstance(row, dict):
+                    continue
+                template_id = row.get("template_id")
+                if not isinstance(template_id, str):
+                    continue
+                template_id = template_id.strip().lower()
+                if not template_id:
+                    continue
+                self.game_item_catalog.append(row)
+                self.game_item_meta_by_template_id[template_id] = row
+
+    def _template_names_from_report(self, mapping: list, catalog_rows: object,
+                                    has_catalog: bool) -> dict[str, str]:
+        """The report's two name sources, reduced to one `template id -> name` map.
+
+        The only block that built a local instead of writing to `self`, which is why it
+        returns one: the caller layers the manual aliases over the result and commits it
+        in a single assignment, so `template_name_map` is never briefly missing the
+        overrides. `catalog_rows` and `has_catalog` come in as parameters for the same
+        reason - they are the caller's decision about which candidate is being read.
+        """
+        # Names come from `item_catalog` (`name`), which the app reads anyway. Old
+        # reports carried the identical names a second time under `mapping`
+        # (`name_guess`) - measured name for name across all 1596 templates - which
+        # is why newer reports drop that block and old ones still load here.
+        loaded: dict[str, str] = {}
+
+        def harvest_names(rows: list, name_key: str) -> None:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                tid = row.get("template_id")
+                name = row.get(name_key)
+                if not isinstance(tid, str) or not isinstance(name, str):
+                    continue
+                name = name.strip()
+                if not name:
+                    continue
+                loaded[tid.lower()] = name
+
+        harvest_names(catalog_rows if has_catalog else [], "name")
+        if not loaded:
+            harvest_names(mapping, "name_guess")
+        return loaded
 
     def _extractor_script_path(self) -> Path:
         base_dir = Path(__file__).resolve().parent
@@ -6008,7 +5552,7 @@ class SaveEditorGUI:
     def _relabel_only_new(self) -> None:
         """Put the count in the label, and switch the filter off when there is nothing.
 
-        A checkbox that reduces 1595 rows to none is a dead end which only answers after it
+        A checkbox that reduces ~1600 rows to none is a dead end which only answers after it
         has been ticked - the same reason a container with no free cell is not offered as a
         placement target. Disabling it also makes "nothing new" readable at a glance.
         """
@@ -6021,6 +5565,24 @@ class SaveEditorGUI:
             self.catalog_only_new_var.set(False)
             self.cat_only_new_cb.state(["disabled"])
 
+    # Zwischenspeicher, die aus dem Katalog gebaut werden und ihn deshalb ueberdauern, wenn
+    # er ausgetauscht wird. Alle drei entstehen faul beim ersten Zugriff und werden nie wieder
+    # angefasst - nach "Refresh Names from Game" zeigten sie den Rest der Sitzung den alten
+    # Stand, waehrend Katalog und Inventarbaum daneben schon den neuen zeigten.
+    CATALOG_CACHES = ("_fits_on_index", "_subcat_labels", "_slot_type_labels")
+
+    def _drop_catalog_caches(self) -> None:
+        """Wirft weg, was aus dem alten Katalog gebaut wurde, damit es neu entsteht.
+
+        Wie bei `TIMER_ATTRIBUTES` ist die Liste das Empfindliche: wer einen vierten
+        `hasattr`-gestuetzten Zwischenspeicher aus Katalogdaten anlegt und ihn hier nicht
+        eintraegt, hat denselben Fehler wieder. `tests/test_new_templates.py` haelt die Liste
+        deshalb gegen den Quelltext.
+        """
+        for name in self.CATALOG_CACHES:
+            if hasattr(self, name):
+                delattr(self, name)
+
     def _on_extraction_success(
         self,
         game_dir: Path,
@@ -6031,6 +5593,7 @@ class SaveEditorGUI:
         ids_before = self._catalog_template_ids()
         self.last_game_path = str(game_dir)
         self._load_template_name_map()
+        self._drop_catalog_caches()
         # Both of these have to happen *before* the views are rebuilt: the catalog reads
         # `new_template_ids` while it inserts its rows, and `_relabel_only_new` may clear
         # the filter when nothing is new. Setting them afterwards leaves the first render
@@ -6040,8 +5603,7 @@ class SaveEditorGUI:
         self._relabel_only_new()
         self._refresh_catalog_view()
         new_count = len(self.template_name_map)
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
 
         # The extractor degrades to guesses instead of failing, so say when the official
         # asset names were unavailable rather than reporting a clean success.
@@ -6156,7 +5718,7 @@ class SaveEditorGUI:
             if not extractor_script.exists():
                 messagebox.showerror(
                     "Mapping refresh",
-                    f"Extractor script not found and could not be imported.",
+                    "Extractor script not found and could not be imported.",
                     parent=self.root,
                 )
                 self._set_status("Mapping refresh failed")
@@ -6249,8 +5811,8 @@ class SaveEditorGUI:
         that is the instance's current ceiling. 0.0 makes the caller omit the percentage
         rather than compute one against a made-up number.
         """
-        inner = (item.get("AdditionalData") or {}).get("_data", {})
-        if isinstance(inner, dict):
+        inner = item_data(item)
+        if inner:
             instance_max = inner.get("DurabilityComponent_md")
             if isinstance(instance_max, (int, float)) and instance_max > 0:
                 return float(instance_max)
@@ -6277,9 +5839,7 @@ class SaveEditorGUI:
         """Units held by a single stacked item, as stored in the save."""
         if not isinstance(item, dict):
             return None
-        inner = (item.get("AdditionalData") or {}).get("_data", {})
-        if not isinstance(inner, dict):
-            return None
+        inner = item_data(item)
         quantity = inner.get("StackableComponent_quantity")
         if isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
             return int(quantity)
@@ -6302,9 +5862,7 @@ class SaveEditorGUI:
     def _item_condition_parts(self, item: dict | None) -> tuple[str, float, float] | None:
         if not isinstance(item, dict):
             return None
-        inner = (item.get("AdditionalData") or {}).get("_data", {})
-        if not isinstance(inner, dict):
-            return None
+        inner = item_data(item)
         durability = inner.get("DurabilityComponent_durability")
         if isinstance(durability, (int, float)):
             return ("DUR", float(durability), self._max_durability_for_item(item))
@@ -6412,8 +5970,8 @@ class SaveEditorGUI:
             template_id = str(item.get("TemplateId") or "").strip().lower()
             if not template_id:
                 continue
-            inner = (item.get("AdditionalData") or {}).get("_data") or {}
-            quantity = inner.get("StackableComponent_quantity") if isinstance(inner, dict) else None
+            inner = item_data(item)
+            quantity = inner.get("StackableComponent_quantity")
             units = (
                 quantity if isinstance(quantity, int) and not isinstance(quantity, bool)
                 and quantity > 0 else 1
@@ -6490,12 +6048,12 @@ class SaveEditorGUI:
         detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical")
         detail_scroll.pack(side="right", fill="y")
         self.recipe_detail = tk.Text(
-            detail_frame, height=7, wrap="word", bg="#252526", fg="#d4d4d4",
+            detail_frame, height=7, wrap="word", bg=COLOR_PANEL, fg=COLOR_TEXT,
             relief="flat", padx=8, pady=6, yscrollcommand=detail_scroll.set,
         )
         detail_scroll.configure(command=self.recipe_detail.yview)
         self.recipe_detail.pack(side="left", fill="both", expand=True)
-        self.recipe_detail.tag_configure("field", foreground="#3794ff")
+        self.recipe_detail.tag_configure("field", foreground=COLOR_ACCENT)
         self.recipe_detail.tag_configure("dim", foreground="#9a9a9a")
         self.recipe_detail.tag_configure("short", foreground="#f48771")
         self.recipe_detail.configure(state="disabled")
@@ -6691,6 +6249,89 @@ class SaveEditorGUI:
             return None
         return (height, width) if rotated else (width, height)
 
+    def _required_parts_growth(self, template_id: str | None, _tiefe: int = 0,
+                               _gesehen: frozenset = frozenset()) -> tuple[int, int]:
+        """Wie viel die Pflichtteile zusammen anbauen, die `_fill_required_slots` gleich anlegt.
+
+        Dieselbe Rekursion wie dort und aus demselben Grund: die Anforderung setzt sich fort -
+        eine SR93 braucht einen Schaft, und der Schaft braucht einen Lauf. Jeder Pflichtplatz
+        im Bericht nennt sein `default_template_id`, es ist also nichts zu raten.
+        """
+        tid = str(template_id or "").strip().lower()
+        if not tid or tid in _gesehen or _tiefe > 6:
+            return 0, 0
+        _gesehen = _gesehen | {tid}
+        breite = hoehe = 0
+        meta = self.game_item_meta_by_template_id.get(tid, {})
+        for slot in (meta.get("mod_slots") or []):
+            if not slot.get("required"):
+                continue
+            standard = str(slot.get("default_template_id") or "").strip().lower()
+            if not standard or standard not in self.game_item_meta_by_template_id:
+                continue
+            resize = self.game_item_meta_by_template_id[standard].get("resize")
+            if isinstance(resize, dict):
+                breite += int(resize.get("width") or 0)
+                hoehe += int(resize.get("height") or 0)
+            weiter = self._required_parts_growth(standard, _tiefe + 1, _gesehen)
+            breite += weiter[0]
+            hoehe += weiter[1]
+        return breite, hoehe
+
+    def _spawn_footprint_for_template(self, template_id: str | None, rotated: bool = False):
+        """Was ein frisch gespawnter Gegenstand braucht - **mit den Pflichtteilen daran.**
+
+        `_footprint_for_template` gibt die nackte Vorlage zurueck, und beim Spawnen ist das die
+        falsche Frage: der Editor haengt unmittelbar danach `_fill_required_slots` an, und die
+        Waffe ist ab diesem Moment groesser. Gefragt wurde vorher, gelegt wird nachher.
+
+        **Gemessen im Spiel am 10.09.2026.** Eine Neckar SR93 aus dem Katalog: gefragt wurde nach
+        ihrer Vorlage 1x1, dann kamen Schaft (+3) und daran der Lauf (+1). Der Editor legte sie
+        auf Spalte 6 eines acht Spalten breiten Reiters - dort ist rechts fuer zwei Zellen Platz.
+        Das Spiel konnte sie nicht zeichnen: **unsichtbar, und eine Zelle blockiert, in die
+        nichts mehr geht.** Es hat ihr selbst `BaseComponent_width: 4` eingetragen, Vorlage plus
+        Schaft; den Lauf am Schaft hat es nicht mitgezaehlt.
+
+        **24 der 35 wachsenden Schusswaffen sind betroffen**, und nicht knapp: eine Ronnie B4
+        fragt nach 1x1 und ist mit ihren Pflichtteilen 6x2, eine LM39 fragt 3x1 und ist 6x2.
+
+        Gedeckelt durch `MaxSize`, wie ueberall - die Teilesumme schaetzt nach oben.
+        """
+        vorlage = self._footprint_for_template(template_id)
+        if vorlage is None:
+            return None
+        zuwachs = self._required_parts_growth(template_id)
+        breite, hoehe = vorlage[0] + zuwachs[0], vorlage[1] + zuwachs[1]
+        meta = self.game_item_meta_by_template_id.get(str(template_id or "").strip().lower(), {})
+        if isinstance(meta.get("max_width"), int):
+            breite = min(breite, meta["max_width"])
+        if isinstance(meta.get("max_height"), int):
+            hoehe = min(hoehe, meta["max_height"])
+        breite, hoehe = max(breite, vorlage[0]), max(hoehe, vorlage[1])
+        return (hoehe, breite) if rotated else (breite, hoehe)
+
+    def _catalog_spawn_need(self, template_ids) -> tuple[int, int] | None:
+        """Was die Zielliste eines Katalog-Spawns als Bedarf melden muss.
+
+        Die pessimistische Box aus groesster Breite und groesster Hoehe ueber alle gewaehlten
+        Vorlagen: jedes Stueck braucht seinen eigenen Platz, also ist das die ehrliche Auskunft.
+        Leicht zu gross fuer die kleineren, aber nie zu klein - und zu klein ist die Richtung,
+        die im Postfach endet.
+
+        Gefragt wird mit `_spawn_footprint_for_template`, also **mit den Pflichtteilen**, die
+        gleich danach angelegt werden. Sonst meldet der Dialog Platz fuer eine Waffe, die es in
+        dieser Groesse nie gibt.
+
+        Eine eigene Methode und keine drei Zeilen im Dialog, damit ein Test das Ergebnis messen
+        kann - im Dialog eingebaut blieb eine Mutation gruen, die hier auf die nackte Vorlage
+        zurueckdrehte. Dieselbe Lehre wie bei `_placement_combo_width`.
+        """
+        flaechen = [f for f in (self._spawn_footprint_for_template(tid)
+                                for tid in template_ids) if f]
+        if not flaechen:
+            return None
+        return (max(f[0] for f in flaechen), max(f[1] for f in flaechen))
+
     def _footprint_for_item(self, item_id: str):
         """(w, h) of an item as it occupies cells, `BaseComponent_rotated` swapping the axes.
 
@@ -6720,11 +6361,20 @@ class SaveEditorGUI:
         A **container** is skipped: `collect_subtree` cannot tell an attached part from a stored
         one, and a backpack does not grow because something is in it.
 
-        `_own_placed_footprint` still overrides everything, for an item this editor assembled
-        that the game has not seen yet.
+        **Nothing overrides this any more.** Until 2026-09-10 a fourth step did:
+        `_own_placed_footprint` modelled an item this editor had assembled at the largest size
+        the data mentions, recognising it by a stored size equal to its template's. The game
+        wrote that exact shape itself the same evening - MKP, M420 and LM39 came back from a
+        game start carrying their template's 3x1 - so the signature marked the game's own items
+        as the editor's and blocked six cells too many. The game's counter settles it: with the
+        override a tab read 211, without it 205, and 205 is what the game shows.
+
+        The room a neighbour might still need was reserved by `_keep_out_cells` for a day
+        after that; on 2026-09-11 the game refused that too. Nothing is held clear around an
+        item any more - see `_placement_in` for the two game starts that settled it.
         """
         item = self.manager.get_item(item_id) or {}
-        data = (item.get("AdditionalData") or {}).get("_data") or {}
+        data = item_data(item)
         rotated = bool(data.get("BaseComponent_rotated"))
 
         template_id = str(item.get("TemplateId") or "").lower()
@@ -6779,65 +6429,49 @@ class SaveEditorGUI:
                     gewachsen_h = min(gewachsen_h, hoechst_h)
                 width, height = max(width, gewachsen_b), max(height, gewachsen_h)
 
-        grown = self._own_placed_footprint(item_id)
-        if grown is not None:
-            width, height = grown
         if rotated:
             return height, width
         return width, height
 
-    def _own_placed_footprint(self, item_id: str) -> tuple[int, int] | None:
-        """What a weapon *this editor* put together really covers, or None to use the save.
+    def _size_to_record(self, template_id: str) -> tuple[int | None, int | None]:
+        """Die Groesse, die beim Anlegen in den Spielstand gehoert - oder (None, None).
 
-        The problem this solves came from play: spawn an assembled Gaston, then an LM39 into the
-        same tab, and the LM39 arrives as mail. The first weapon is stored at its template size
-        while the game grows it, so the second one is placed into space the first actually
-        occupies. Holding the cells in a session variable fixed it only until the editor re-read
-        the save - which is what the report of "the free space is not read again" was.
+        **Ein dehnbarer Gegenstand traegt seine Basisgroesse nie.** Gezaehlt in einem echten
+        Spielstand von 1887 Gegenstaenden: 63 dehnbare tragen eine Groesse, die von der
+        Vorlage **abweicht** (die sind wirklich gewachsen), 11 tragen gar keine - und **0**
+        tragen ihre Basisgroesse. Das Spiel rechnet sie sich aus, wenn sie nicht dasteht.
 
-        So the footprint itself has to say it, and the signature has to be narrow enough not to
-        disturb what the game wrote. Three conditions together, all measured against a real
-        save's 54 grid-sitting weapons:
+        Der Editor schrieb sie trotzdem, und zwar mit Absicht: `_own_placed_footprint` hat
+        genau diese Signatur als Erkennungszeichen fuer "das habe ich gelegt" benutzt, weil
+        kein echter Gegenstand sie haben sollte. Beides ist widerlegt - die Signatur schreibt
+        das Spiel selbst (deshalb ist jene Methode weg), und die Groesse hier zu schreiben
+        schickt die Waffe ins Postfach. Kontrollierter Versuch mit vier Gesterby, die sich in
+        je einer Eigenschaft unterschieden:
 
-        - the template is **resizable**, which is what "can grow" means in this data
-        - the item carries an **explicit** size equal to its template's. The game leaves the size
-          out entirely on 8 assembled weapons in rifle cases (Herstal 57, Eliphalet 700, Ramon
-          1891), so "absent" must not qualify - modelling those generously is what would put
-          overlaps back into `test_placement_real.py`
+            mit Groesse an der Waffe   -> Postfach
+            ohne Groesse an der Waffe  -> bleibt liegen
+            Groesse nur am Magazin     -> bleibt liegen
+            ohne Magazin               -> Postfach (der Steckplatz ist Pflicht)
 
-        **No item in a real save matches both** - measured across all 1859 - while every resizable
-        item this editor places does, until the game rewrites its size. Bare spawns are included
-        on purpose: the 4x2 that started this was a Gaston with no parts at all.
+        Zweimal wiederholt, jedes Mal gleich. Die Groesse **am Anbauteil** ist harmlos; das
+        Spiel schreibt sie dort selbst 224-mal.
 
-        The answer is the largest of everything the data states - the stored size, the parts'
-        `resize` sum, the `MaxSize` ceiling - plus `GROWTH_MARGIN`.
+        Nicht restlos verstanden: SPS und STR38 tragen dieselbe Form und bleiben liegen,
+        Gesterby und RAMB nicht. Was die beiden unterscheidet, ist offen - lange Waffen mit
+        Pflicht-Steckplatz, und Gesterby kann als einzige gar nicht wachsen (Vorlage =
+        MaxSize). Der Fix hilft, wo es klemmt, und aendert nichts, wo es geht: er bringt den
+        Editor auf eine Form, die im Spielstand des Spiels 0 Gegenbeispiele hat.
         """
-        item = self.manager.get_item(item_id) or {}
-        meta = self.game_item_meta_by_template_id.get(
-            str(item.get("TemplateId") or "").strip().lower(), {})
+        meta = self.game_item_meta_by_template_id.get(str(template_id or "").strip().lower(), {})
+        breite, hoehe = meta.get("width"), meta.get("height")
+        if not isinstance(breite, int) or not isinstance(hoehe, int):
+            return None, None
         if not meta.get("is_resizable"):
-            return None
-        data = (item.get("AdditionalData") or {}).get("_data") or {}
-        width, height = data.get("BaseComponent_width"), data.get("BaseComponent_height")
-        if not isinstance(width, int) or not isinstance(height, int):
-            return None
-        if self._footprint_for_template(
-                str(item.get("TemplateId") or "").lower()) != (width, height):
-            return None
-
-        grown_w, grown_h = width, height
-        for part_id in self.manager.collect_subtree(str(item_id))[1:]:
-            part = self.manager.get_item(part_id) or {}
-            part_meta = self.game_item_meta_by_template_id.get(
-                str(part.get("TemplateId") or "").strip().lower(), {})
-            resize = part_meta.get("resize")
-            if isinstance(resize, dict):
-                grown_w += int(resize.get("width") or 0)
-                grown_h += int(resize.get("height") or 0)
-        ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
-        ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
-        return (max(grown_w, ceiling_w) + GROWTH_MARGIN[0],
-                max(grown_h, ceiling_h) + GROWTH_MARGIN[1])
+            # Starr: die Groesse aendert sich nie, und das Spiel schreibt sie hier selbst.
+            return breite, hoehe
+        # Dehnbar: nur die **gewachsene** Groesse gehoert hinein. Sie entsteht erst mit den
+        # Teilen, die gleich angebaut werden - beim Anlegen ist sie also noch die Basis.
+        return None, None
 
     def _parts_resize_sum(self, item_id: str) -> tuple[int, int]:
         """Wie viel die angebauten Teile zusammen an Breite und Hoehe hinzufuegen.
@@ -6857,100 +6491,51 @@ class SaveEditorGUI:
         return breite, hoehe
 
     def _footprint_for_placing(self, item_id: str):
-        """Wie viel Platz ein Gegenstand **beim Hinlegen** braucht, nicht was er belegt.
+        """Wie viel Platz ein Gegenstand **beim Hinlegen** braucht: dasselbe, in Vorlagenlage.
 
-        Das sind zwei verschiedene Fragen, und sie zu vermischen war der Fehler. Gemeldet am
-        09.09.2026: eine vollstaendig zusammengebaute DVS liess sich aus der Charakterausruestung
-        in Reiter 4 schieben, wo vier freie Zellen nebeneinander lagen - und das Spiel schickte
-        sie ins Postfach.
+        Dass das zwei Funktionen sind, hat einen Grund, und es ist nicht mehr der urspruengliche.
+        Gemeldet am 09.09.2026: eine vollstaendig zusammengebaute DVS liess sich aus der
+        Charakterausruestung in Reiter 4 schieben, wo vier freie Zellen nebeneinander lagen - und
+        das Spiel schickte sie ins Postfach. Damals rechnete `_footprint_for_item` nur den
+        eingetragenen Wert und hier stand die Wachstumsrechnung daneben. Inzwischen rechnet
+        `_footprint_for_item` die echte Groesse selbst - Vorlage plus die `resize`-Summe der
+        Teile, gedeckelt durch `MaxSize`, nie unter dem Eingetragenen - und aus dem Spiel ist
+        bestaetigt, dass das Spiel genau diese Flaeche sperrt und keinen Rand darum haelt.
 
-        Gemessen an dem Save: die DVS ist mit **4x1** eingetragen, ihre Vorlage ist 2x1, ihr
-        `MaxSize` **6x2**. Als Belegung sind 4x1 richtig, denn das hat das Spiel geschrieben.
-        Beim Hinlegen verlangt das Spiel aber die 6x2, und in einen Streifen von vier Zellen
-        passt das nie.
+        Damit bleibt **ein** Unterschied, und der ist der ganze Zweck dieser Funktion: die Lage.
 
-        Drei Quellen, die groesste je Achse gewinnt - alles in der Orientierung der Vorlage:
+        **In der Orientierung der Vorlage, ohne die aktuelle Drehung.** `find_placement` probiert
+        ohnehin beide Lagen und meldet zurueck, ob es drehen musste - und dieses "gedreht" wird als
+        `BaseComponent_rotated` geschrieben. Gaebe man die bereits gedrehten Maße hinein, waere die
+        Meldung relativ zur alten Drehung und die Flagge danach falsch herum. Gemessen am
+        09.09.2026 an einer Ramon 1891, die gedreht in einem Reiter lag: der Editor prueft 3x5,
+        legt sie dann ungedreht ab, wo sie 4x1 belegt - Spalte 3 hat nie jemand angesehen.
+        `_footprint_for_item` behaelt den Tausch, weil es beschreibt, was bedeckt ist, statt
+        wonach zu suchen ist.
 
-        - **was es belegt**, aus `_footprint_for_item`
-        - **`MaxSize`**, wenn die Vorlage wachsen kann. Das ist der Fall der DVS.
-        - **Vorlage plus die `resize`-Summe der Teile**, aber nur solange die gespeicherte
-          Groesse noch der Vorlage entspricht. Dann hat das Spiel das Wachstum nicht
-          eingetragen und die Teile sind das Einzige, was davon erzaehlt; steht schon etwas
-          Groesseres da, waere es doppelt gezaehlt.
+        **Hier stand bis zum 10.09.2026 eine zweite Wachstumsrechnung**, und die hob den Deckel
+        von `_footprint_for_item` wieder auf: sie addierte die `resize`-Summe ein zweites Mal,
+        ohne `MaxSize`. Die Summe schaetzt aber nach oben - sie trifft 139 von 162 gewachsenen
+        Gegenstaenden genau und liegt beim Rest darueber, eine SVS bei 6x4 gegen ein gemessenes
+        und angegebenes 5x2. Am echten Save verlangten dadurch **36 Gegenstaende mehr, als sie
+        belegen, 22 davon ueber ihrem eigenen MaxSize**: zusammen 91 Zellen, im schlimmsten Fall
+        eine Ronnie B4 mit 7x4 statt 6x2. Mit Deckel gerechnet aendert der Nachschlag bei keinem
+        einzigen der 1882 Gegenstaende noch etwas - er war nur noch der Weg, den Deckel zu
+        umgehen, und ist deshalb weg statt gedeckelt.
 
-        **Kein Widerspruch zu `_keep_out_cells`**, auch wenn es so aussieht: dort ist gemessen,
-        dass eine bereits gewachsene Waffe als *Nachbar* **nicht** ihr Maximum blockiert - ein
-        Assault Weapon hielt 31 Zellen frei, die im Spiel sichtbar leer waren. Beides zusammen
-        ergibt ein stimmiges Bild: das Spiel will die volle Flaeche frei, waehrend es etwas
-        hinlegt, und belegt danach nur, was es zeichnet.
-
-        **Warum eine eigene Funktion und nicht `_footprint_for_item` erweitert:** genau das
-        wurde zuerst versucht und gemessen. `test_placement_real.py` meldete sofort Gegenstaende,
-        die aus ihrem Behaelter herausragen (Ammo box, 21 Zellen ausserhalb eines 45-Zellen-
-        Gitters) - dieselbe Funktion beantwortet naemlich auch, was die *Nachbarn* belegen. Was
-        das Spiel aufgeschrieben hat, darf der Editor nicht groesser rechnen.
-
-        Ein **Behaelter** ist ausgenommen: `collect_subtree` kennt den Unterschied zwischen
-        angebautem Teil und eingelegtem Gegenstand nicht, und ohne diese Grenze schlug eine
-        Waffe im Waffenkoffer dem Koffer ihre Groesse zu (Rifle case, 4x2 auf 6x4).
+        **Auch ein Behaelter geht durch die Drehung.** Er hatte einen eigenen Kurzausstieg, der
+        die schon gedrehten Maße zurueckgab - derselbe Fehler wie bei der Ramon, an 14 gedrehten
+        Item boxes im echten Save. Was ihn noetig gemacht hatte, ist die Wachstumsrechnung
+        gewesen: `collect_subtree` kennt den Unterschied zwischen angebautem Teil und eingelegtem
+        Gegenstand nicht, und ohne diese Grenze schlug eine Waffe im Waffenkoffer dem Koffer ihre
+        Groesse zu (Rifle case, 4x2 auf 6x4). Diese Grenze zieht `_footprint_for_item` inzwischen
+        selbst, also braucht es hier keine zweite.
         """
         grund = self._footprint_for_item(item_id)
         if grund is None:
             return None
-        if self._container_cells_for(item_id):
-            return grund
-
-        item = self.manager.get_item(item_id) or {}
-        meta = self.game_item_meta_by_template_id.get(
-            str(item.get("TemplateId") or "").strip().lower(), {})
-        daten = (item.get("AdditionalData") or {}).get("_data") or {}
-        gedreht = bool(daten.get("BaseComponent_rotated"))
-
-        # Ab hier ungedreht rechnen. `grund` kommt aus `_footprint_for_item` und hat die Achsen
-        # bei gedrehten Gegenstaenden schon getauscht, `MaxSize` und `resize` stehen dagegen in
-        # der Orientierung der Vorlage. Am Ende wird genau einmal getauscht.
-        breite, hoehe = (grund[1], grund[0]) if gedreht else grund
-
-        # **Die Groesse mit dem, was jetzt dransteckt** - dieselbe Rechnung, die
-        # `_preset_reservation` beim Zusammengebaut-Spawnen anstellt. Vorher stand hier
-        # `MaxSize`, also die Groesse mit *allen* Steckplaetzen belegt; bei einer nur teilweise
-        # bestueckten Waffe ist das zu viel. Gemessen an einem echten Save forderten so alle 43
-        # wachsenden Gegenstaende mehr als noetig, oft die doppelte Flaeche - eine KA74 7x4
-        # statt 6x2. Die Doku von `_preset_reservation` verlangt ausdruecklich, dass die beiden
-        # Wege sich ueber dieselbe Waffe nicht widersprechen; genau das taten sie.
-        #
-        # Die Summe geht ueber den **ganzen** Anbau, nicht nur die direkt angesteckten Teile:
-        # ein Daempfer am Lauf verlaengert die Waffe genauso. Gegen die eingetragenen Groessen
-        # gerechnet lag die Teilbaum-Summe bei 25 gewachsenen Gegenstaenden **kein einziges Mal
-        # darunter**, die Variante mit nur direkten Kindern dagegen sechsmal - und zu wenig zu
-        # reservieren ist der Fall, der im Postfach endet.
-        vorlage = self._footprint_for_template(str(item.get("TemplateId") or "").lower())
-        gewachsen = False
-        if vorlage:
-            zuwachs = self._parts_resize_sum(item_id)
-            if any(zuwachs):
-                gewachsen = True
-                breite = max(breite, vorlage[0] + zuwachs[0])
-                hoehe = max(hoehe, vorlage[1] + zuwachs[1])
-
-        # `GROWTH_MARGIN` wie ueberall sonst, wo fuer Wachstum reserviert wird - im Spiel
-        # bestaetigt an einem Neckar SR93, den das Spiel eine Zelle weiter blockt, als er
-        # eingetragen ist. Nicht an Gegenstaenden, die nicht wachsen koennen: das Spiel legt
-        # Koerperteile lueckenlos nebeneinander.
-        if meta.get("is_resizable") or gewachsen:
-            breite += GROWTH_MARGIN[0]
-            hoehe += GROWTH_MARGIN[1]
-
-        # **In der Orientierung der Vorlage, ohne die aktuelle Drehung.** `find_placement`
-        # probiert ohnehin beide Lagen und meldet zurueck, ob es drehen musste - und dieses
-        # "gedreht" wird als `BaseComponent_rotated` geschrieben. Gaebe man die bereits
-        # gedrehten Maße hinein, waere die Meldung relativ zur alten Drehung und die Flagge
-        # danach falsch herum.
-        #
-        # Gemessen am 09.09.2026 an einer Ramon 1891, die gedreht in einem Reiter lag: der
-        # Editor prueft 3x5, legt sie dann ungedreht ab, wo sie 4x1 belegt - Spalte 3 hat nie
-        # jemand angesehen. Beides ging aus, weil `gedreht` zweimal angewandt wurde.
-        return breite, hoehe
+        daten = item_data(self.manager.get_item(item_id))
+        return (grund[1], grund[0]) if daten.get("BaseComponent_rotated") else grund
 
     def _container_cells_for(self, container_id: str):
         item = self.manager.get_item(container_id)
@@ -6961,94 +6546,45 @@ class SaveEditorGUI:
         )
         return container_cells(meta.get("container"))
 
+    def _container_regions_for(self, container_id: str):
+        """Die Faecher eines Behaelters, oder None wenn seine Form nicht modelliert ist.
+
+        Getrennt von `_container_cells_for`, weil die beiden verschiedene Fragen beantworten:
+        wie viel Platz ist da (Zellen zaehlen) und wo darf etwas hin (Faecher). Beim CARTER
+        sind das 20 Zellen in fuenf Fachern, von denen das groesste 2x3 ist.
+        """
+        item = self.manager.get_item(container_id)
+        if item is None:
+            return None
+        meta = self.game_item_meta_by_template_id.get(
+            str(item.get("TemplateId") or "").lower(), {}
+        )
+        return container_regions(meta.get("container"))
+
     def _placement_in(self, container_id: str, width: int, height: int):
         """(I, J, rotated) for a free spot, or None when the container has no room.
 
-        An assembled weapon blocks what it will grow into rather than what the save says it
-        covers - see `_own_placed_footprint`. That started life as a set of cells remembered
-        per container, which worked until the editor re-read the save and forgot them: spawn a
-        Gaston, then an LM39 into the same tab in a later session, and the LM39 arrives as mail.
-        Deriving it from the item tree instead survives a reload, a restart, and every other
-        placement path.
+        **What is taken is what is drawn, and nothing beyond it.** Two answers to "but does a
+        neighbour need room to grow into?" have stood here and both are gone:
+        `_own_placed_footprint` on 2026-09-10, `_keep_out_cells` on 2026-09-11. Each was built
+        on a weapon that came back as mail, and each of those weapons is explained by the shape
+        defects fixed on 2026-09-10 - an editor that wrote a base size onto every spawned weapon
+        mails it whatever the spacing.
+
+        Settled by two game starts. On 2026-09-11, thirteen 1x1 parts were laid into cells the
+        editor was holding clear - around fully fitted weapons and around weapons carrying only
+        their required parts, one of them a cell *beyond* the ceiling, the exact cell the old
+        note claimed the game blocked. **All thirteen stayed, the mail counter never moved**, and
+        92 weapons already in the save served as controls. The game's own tab counter agrees: it
+        matches the drawn occupancy cell for cell (217/203/205/236), which it could not if the
+        game held anything clear around a weapon.
         """
         cells = self._container_cells_for(container_id)
         if not cells:
             return None
         occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
-        for cell in self._keep_out_cells(container_id):
-            occupied.setdefault(cell, "margin")
-        return find_placement(cells, occupied, width, height)
-
-    def _keep_out_cells(self, container_id: str) -> set[tuple[int, int]]:
-        """A cell of margin around every neighbour that can grow.
-
-        **The game blocks more than it draws**, and not only for items this editor made. A bare
-        Gaston 17 draws 2x1 and takes 4x2; weapons the game itself packed into a rifle case sit
-        two rows apart while each is stored one row tall. Anything dropped into that unseen
-        margin is an item the game cannot place, and it answers by mailing it - which is how a
-        stack of ammunition spawned next to an existing weapon ended up in the mailbox.
-
-        So the search treats every **resizable** neighbour as covering the most it could: its
-        drawn size or its `MaxSize`, whichever is larger, plus `GROWTH_MARGIN`. Ten stacks of
-        ammunition spawned into a tab that held weapons came back as three placed and seven in
-        the mailbox, which is what a margin that is too small looks like.
-
-        Nothing is written and no footprint changes - this only makes the editor pick a roomier
-        spot, which is why `test_placement_real.py` still measures the model against the save at
-        0 overlaps. Non-resizable neighbours are untouched: ammunition, attachments, medkits and
-        everything else that cannot grow, which is most of what sits in a tab.
-        """
-        margin: set[tuple[int, int]] = set()
-        for child_id in self.manager.get_children(str(container_id)):
-            child = self.manager.get_item(child_id) or {}
-            meta = self.game_item_meta_by_template_id.get(
-                str(child.get("TemplateId") or "").strip().lower(), {})
-            if not meta.get("is_resizable"):
-                continue
-            footprint = self._footprint_for_item(child_id)
-            if footprint is None:
-                continue
-            ceiling_w = meta.get("max_width") if isinstance(meta.get("max_width"), int) else 0
-            ceiling_h = meta.get("max_height") if isinstance(meta.get("max_height"), int) else 0
-
-            data = (child.get("AdditionalData") or {}).get("_data") or {}
-            # Note for whoever comes next: `MaxSize` is read in the template's orientation
-            # while `_footprint_for_item` swaps the axes for `BaseComponent_rotated`, so a
-            # rotated item is compared against an unrotated ceiling. Swapping it was tried on
-            # 2026-08-10 and **not kept**: on a real save it made the margin larger, not
-            # smaller (31 cells to 34), and no measurement says which orientation the game
-            # uses for room it has not filled yet. Recorded in CHECKPOINT rather than fixed on
-            # a hunch - the safe direction here is the one that reserves more.
-
-            # **Reserve for growth only where growth has not already happened**, and the test
-            # of that is a stored size that is *larger* than the template's - never merely
-            # different. Measured on a real save on 2026-08-10: an Assault Weapon stored 4x1
-            # against a 2x1 template and a 6x3 maximum was holding 31 cells of a tab clear,
-            # and the space was visibly empty in game. It has grown, the game wrote what it
-            # covers, and reserving its maximum on top of that reserves for growth twice.
-            #
-            # **"Different" is the wrong test and `test_presets.py` refutes it**: the PRO90
-            # that cost seven stacks of ammunition stored **1x1** against a 2x1 template and a
-            # 4x2 maximum, and the game blocked the whole maximum anyway. A size below the
-            # template is not a statement about growth, so those keep their ceiling - as does
-            # the bare Gaston 17 whose size equals its template's, and the Herstal 57 next
-            # door, which carries a width and no height at all.
-            tw, th = meta.get("width"), meta.get("height")
-            stored = (data.get("BaseComponent_width"), data.get("BaseComponent_height"))
-            if (all(isinstance(v, int) for v in stored)
-                    and all(isinstance(v, int) for v in (tw, th))
-                    and stored[0] >= tw and stored[1] >= th
-                    and stored != (tw, th)):
-                ceiling_w = ceiling_h = 0
-
-            width = max(footprint[0], ceiling_w) + GROWTH_MARGIN[0]
-            height = max(footprint[1], ceiling_h) + GROWTH_MARGIN[1]
-            anchor = self.manager.cell_of(child_id)
-            margin |= {
-                (anchor[0] + di, anchor[1] + dj)
-                for di in range(width) for dj in range(height)
-            }
-        return margin
+        return find_placement(cells, occupied, width, height,
+                              self._container_regions_for(container_id))
 
     def _is_bookkeeping_container(self, container_id: str) -> bool:
         """A container the game keeps for itself rather than one the player fills.
@@ -7088,13 +6624,14 @@ class SaveEditorGUI:
         list has to say something about the footprint. The first version said it by dropping
         those containers, and that was wrong twice over: it takes away the overview, and it
         hides destinations on the strength of a **reservation** that is itself an upper bound
-        with an open question in it (see `GROWTH_MARGIN`). If the reservation is too
+        with an open question in it. If the reservation is too
         cautious, removing the entry turns a guess into a verdict. A label leaves the choice
         where it belongs and still answers the question before the choice is made.
 
-        The advertised count subtracts `_keep_out_cells`. Those cells are free of items but
-        the placement search will not use them, so counting them was the other half of the
-        same lie - it is what turned 15 usable cells into an advertised 40.
+        The advertised count is simply the cells no item covers. It used to subtract a margin
+        around neighbours that could still grow, which is what turned 15 usable cells into an
+        advertised 40 - but that margin is gone since 2026-09-11 (see `_placement_in`), so the
+        two numbers agree again by having nothing between them.
         """
         t = TRANSLATIONS[self.current_lang]
         targets: list[tuple[str, str]] = []
@@ -7108,12 +6645,12 @@ class SaveEditorGUI:
                 return None
             occupied = self.manager.occupied_cells(container_id, self._footprint_for_item)
             blocked = {c for c in occupied if c in cells}
-            blocked |= self._keep_out_cells(container_id) & cells
             free = len(cells) - len(blocked)
             if free <= 0:
                 return None
             takes = (not need
-                     or find_placement(cells, blocked, need[0], need[1]) is not None)
+                     or find_placement(cells, blocked, need[0], need[1],
+                                       self._container_regions_for(container_id)) is not None)
             return (free, len(cells), takes)
 
         def beschriften(label: str, takes: bool) -> str:
@@ -7222,12 +6759,7 @@ class SaveEditorGUI:
             messagebox.showwarning(title, t["msg_place_no_targets"], parent=self.root)
             return None
 
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.transient(self.root)
-        # Without this the Toplevel keeps the system background and the dark labels sit on a
-        # pale rectangle.
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(title)
         chosen: list[str | None] = [None]
 
         body = ttk.Frame(win, padding=12)
@@ -7557,7 +7089,7 @@ class SaveEditorGUI:
         This used to be two menu entries: a plain one asking count and destination in two
         consecutive dialogs, and a "..." one asking the same in a single window plus a
         starting condition. Measured against the catalog, the plain path offered nothing the
-        other did not - the extra fields only apply to 586 of 1595 templates, and for the
+        other did not - the extra fields only apply to some 590 of the ~1600 templates, and for the
         other 1009 the two were the same two questions in a different number of windows.
         So there is one entry now. The dialog shows only the fields a template can use.
         """
@@ -7581,11 +7113,7 @@ class SaveEditorGUI:
         else:
             condition_field, condition_max = None, None
 
-        # Die pessimistische Box aus groesster Breite und Hoehe: jede Vorlage braucht ihren
-        # eigenen Platz, also ist das die ehrliche Auskunft fuer die Zielliste.
-        flaechen = [f for f in (self._footprint_for_template(tid) for tid, _n in vorlagen) if f]
-        need = (max((f[0] for f in flaechen), default=1),
-                max((f[1] for f in flaechen), default=1)) if flaechen else None
+        need = self._catalog_spawn_need([tid for tid, _n in vorlagen])
 
         result = self._ask_amount_and_target(
             title=t["msg_add_item_title"],
@@ -7653,7 +7181,7 @@ class SaveEditorGUI:
             else:
                 messagebox.showinfo(t["tab_catalog"], hinweis, parent=self.root)
 
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(f"Added {gesamt} catalog item(s) (not saved yet)")
 
     def _condition_ceiling_for_template(
@@ -7697,8 +7225,6 @@ class SaveEditorGUI:
             return
 
         meta = self.game_item_meta_by_template_id.get(template_id, {})
-        width = meta.get("width")
-        height = meta.get("height")
 
         to_inbox = parent_id == "inbox"
         target_label = t["target_inbox"] if to_inbox else ""
@@ -7719,7 +7245,7 @@ class SaveEditorGUI:
                 return 0
             inbox_host = tabs[0]
 
-        footprint = self._footprint_for_template(template_id)
+        footprint = self._spawn_footprint_for_template(template_id)
         if footprint is None:
             # Without a footprint there is no way to know what the item covers, and a wrong
             # guess is what sends it to the mailbox.
@@ -7730,6 +7256,8 @@ class SaveEditorGUI:
 
         # Each spawned item takes cells away from the next one, so the free spot is looked
         # up again per item rather than once up front.
+        eigene_breite, eigene_hoehe = self._size_to_record(template_id)
+
         def place_one(quantity: int | None) -> bool:
             if to_inbox:
                 # No grid position at all. The game cannot place it and hands it over as
@@ -7743,8 +7271,8 @@ class SaveEditorGUI:
             created = self.manager.add_inventory_item(
                 parent_id=inbox_host if to_inbox else parent_id,
                 template_id=template_id,
-                width=width if isinstance(width, int) else None,
-                height=height if isinstance(height, int) else None,
+                width=eigene_breite,
+                height=eigene_hoehe,
                 quantity=quantity,
                 position=(i, j),
             )
@@ -7752,7 +7280,7 @@ class SaveEditorGUI:
             # demand - measured in play, a Gaston without its slide goes to the mailbox.
             self._fill_required_slots(str(created["Id"]))
             if rotated or condition:
-                inner = created.setdefault("AdditionalData", {}).setdefault("_data", {})
+                inner = writable_item_data(created)
                 if rotated:
                     inner["BaseComponent_rotated"] = True
                 if condition:
@@ -7797,8 +7325,7 @@ class SaveEditorGUI:
                 parent=self.root,
             )
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(f"Added {added} catalog item(s) (not saved yet)")
         return added
 
@@ -7880,6 +7407,24 @@ class SaveEditorGUI:
 
         return width, height
 
+    def _preset_counts(self) -> tuple[int, int]:
+        """Wie viele Bausaetze es gibt und wie viele davon ueber ihre Decke wachsen.
+
+        Beide Zahlen standen als Prosa in den Texten und veralteten dort still: sie haengen am
+        Katalog des Spielers, nicht am Editor. Ohne Bericht - frischer Klon, nie extrahiert -
+        gaebe `len(self.presets_meta)` eine ehrliche, aber nutzlose 0 aus; dann sind
+        `PRESET_COUNT_SHIPPED`/`PRESET_OUTGROWN_SHIPPED` des getesteten Builds die bessere
+        Auskunft.
+
+        Der Durchlauf ueber `_preset_outgrows_its_ceiling` kostet einen Gang durch rund 50
+        Zeilen und laeuft nur, wenn ein Text die Zahl braucht - beim Sprachwechsel und beim
+        Oeffnen des Bausatz-Dialogs, nicht im Zeichentakt.
+        """
+        rows = self.presets_meta or []
+        if not rows:
+            return PRESET_COUNT_SHIPPED, PRESET_OUTGROWN_SHIPPED
+        return len(rows), sum(1 for row in rows if self._preset_outgrows_its_ceiling(row))
+
     def _preset_outgrows_its_ceiling(self, preset: dict) -> bool:
         """True when the finished weapon would be at or past what its template says it can grow to.
 
@@ -7925,7 +7470,7 @@ class SaveEditorGUI:
         4x1, a Neckar SR93 5x1 against a 1x1 template.
 
         `MaxSize` is above every observed value, so it is a safe ceiling even though it is not
-        the answer - and `GROWTH_MARGIN` goes on top, because in play a bare Gaston blocked one
+        the answer, because in play a bare Gaston blocked one
         cell more than its own ceiling. Nothing false is written into the save; this is only how
         much space the search keeps clear.
         """
@@ -7933,50 +7478,59 @@ class SaveEditorGUI:
             str(template_id or "").strip().lower(), {})
         width, height = meta.get("max_width"), meta.get("max_height")
         if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
-            return width + GROWTH_MARGIN[0], height + GROWTH_MARGIN[1]
+            return width, height
         # One preset root (template 6x2) carries no MaxSize at all. Its own size is then the
         # best statement available.
         return self._footprint_for_template(template_id)
 
     def _preset_reservation(self, preset: dict) -> tuple[int, int] | None:
-        """The contiguous room an assembled preset needs: **its finished size plus a cell.**
+        """Der zusammenhaengende Platz, den ein zusammengebauter Bausatz braucht.
 
-        Not `MaxSize`. A weapon that arrives with its parts on it is not going to grow again,
-        and reserving what it *could* have grown to reserves for growth that has already
-        happened - the same rule `_keep_out_cells` follows for a neighbour the game has
-        already sized, and the two must not disagree about the same weapon.
+        **Das Groesste aus Fertiggroesse und `MaxSize`** - also bewusst zu viel, und das ist
+        seit dem 10.09.2026 eine Messung und keine Vorsicht.
 
-        Measured on a real save on 2026-08-11, across the **34 assembled weapons the game
-        itself built**: none is taller than 2 cells or wider than 5, while the old reservation
-        asked for 6x3 to 7x4 - four to nine times the area. A 1A4M the game stores at 3x1 was
-        being given 28 cells.
+        Die Geschichte in drei Schritten, weil die mittlere Fassung ueberzeugend aussah und
+        falsch war:
 
-        **The one cell of `GROWTH_MARGIN` stays**, and that is measured too, on the same
-        save: a Neckar SR93 stored 4x1 has the game blocking 5x2 around it, exactly one cell
-        further on each axis. Dropping it would put the new weapon on a cell its neighbour
-        really claims, which is the corner the seven mailed ammunition stacks came from.
+        1. Anfangs stand hier `MaxSize`, die Groesse mit allen Steckplaetzen belegt.
+        2. Am 11.08.2026 auf die **Fertiggroesse** verkleinert, und dafuer gab es Zahlen: ueber
+           die 34 zusammengebauten Waffen, die das Spiel selbst gebaut hat, ist keine hoeher als
+           2 Zellen oder breiter als 5, waehrend `MaxSize` 6x3 bis 7x4 verlangte - vier- bis
+           neunmal die Flaeche. Ein 1A4M, das das Spiel mit 3x1 fuehrt, bekam 28 Zellen.
+        3. Am 10.09.2026 schien das Spiel es zu widerlegen. Ein **DVS_MK3, fertig 4x1**, wurde
+           in eine Luecke von genau 4x1 gespawnt und kam **ins Postfach** - zerlegt, die Teile
+           lagen einzeln im Reiter. Also zurueck auf `max(Fertiggroesse, MaxSize)`.
+        4. Am 11.09.2026 stellte sich heraus, dass Schritt 3 die falsche Ursache benannt hatte.
+           Am selben 10.09. kam heraus, dass der Editor damals die **Basisgroesse** an jede
+           gespawnte Waffe schrieb - eine Form, die das Spiel nie erzeugt, und die **jede** so
+           gespawnte Waffe ins Postfach schickt. Die DVS_MK3 war also doppelt erklaert, und die
+           falsche Erklaerung kostete in jedem Reiter Platz.
 
-        `_preset_grown_size` overshoots rather than under-reports (see there), so this stays an
-        upper bound on the finished size - the right direction. Only when it cannot be computed
-        at all does the `MaxSize` estimate stand in.
+        **Der Versuch, der es entschieden hat** (11.09.2026, ein Spielstart): drei Bausaetze in
+        eine Luecke von genau ihrer Fertiggroesse gesetzt - darunter dieselbe DVS_MK3 -, und in
+        die Zellen, die `MaxSize` freigehalten haette, sechs 1x1-Plastikteile gelegt.
+
+            DVS_MK3      fertig 4x1, MaxSize 6x2, 3 Teile in der Sperrflaeche -> alles bleibt
+            1A4M         fertig 5x2, MaxSize 6x3, 2 Teile in der Sperrflaeche -> alles bleibt
+            Neckar SR93  fertig 5x1, MaxSize 6x2, 1 Teil  in der Sperrflaeche -> alles bleibt
+
+        Nichts hat sich bewegt, der Postfachzaehler blieb bei 63, und die 15 grosszuegig
+        gesetzten Waffen vom Vortag - 15 Kontrollen - lagen unveraendert da. **Die Fertiggroesse
+        reicht.**
+
+        Sie ist eine Obergrenze auf das Wachstum und keine knappe Zahl: `_preset_grown_size`
+        ueberschaetzt (139 von 162 gewachsenen Gegenstaenden genau, den Rest zu gross), und
+        `_footprint_for_item` deckelt danach noch bei `MaxSize`. Reserviert wird also nie
+        weniger, als die Waffe hinterher belegt.
+
+        **Was dabei auffiel und einen Tag spaeter erledigt war.** Vier der sechs Plastikteile
+        lagen in Zellen, die `_keep_out_cells` sperrte - das Spiel hat auch die akzeptiert. Der
+        Nachschlag mit knapp bestueckten Waffen bestaetigte es, und die Sperrflaeche ist seither
+        weg.
         """
-        grown = self._preset_grown_size(preset)
-        if grown is not None:
-            # **Gedeckelt durch `MaxSize`**, seit die Groessen am 09.09.2026 im Spiel abgelesen
-            # wurden. Bei 8 der 53 Bausaetze liegt die Teilesumme darueber, und das galt bisher
-            # als Beleg, dass `MaxSize` zu wenig Platz liesse. Ein SVS im Waffenkoffer widerlegt
-            # das: seine Teile summieren sich zu 6x4, sein `MaxSize` nennt 5x2, und er belegt
-            # 5x2. Groesser als mit allen Steckplaetzen belegt kann eine Waffe nicht werden, die
-            # acht hielten also Platz fuer eine Groesse frei, die es nicht gibt. Ueber alle 53
-            # sinken die Reservierungen von 829 auf 790 Zellen.
-            breite, hoehe = grown
-            meta = self.game_item_meta_by_template_id.get(
-                str(preset.get("root") or "").strip().lower(), {})
-            if isinstance(meta.get("max_width"), int):
-                breite = min(breite, meta["max_width"])
-            if isinstance(meta.get("max_height"), int):
-                hoehe = min(hoehe, meta["max_height"])
-            return (breite + GROWTH_MARGIN[0], hoehe + GROWTH_MARGIN[1])
+        fertig = self._preset_grown_size(preset)
+        if fertig is not None:
+            return fertig
         return self._assembled_reservation(str(preset.get("root") or ""))
 
     def _fill_required_slots(self, item_id: str, _depth: int = 0) -> int:
@@ -8012,12 +7566,12 @@ class SaveEditorGUI:
             default = str(slot.get("default_template_id") or "").strip().lower()
             if not default:
                 continue
-            meta = self.game_item_meta_by_template_id.get(default, {})
+            teil_breite, teil_hoehe = self._size_to_record(default)
             part = self.manager.add_inventory_item(
                 parent_id=str(item_id),
                 template_id=default,
-                width=meta.get("width") if isinstance(meta.get("width"), int) else None,
-                height=meta.get("height") if isinstance(meta.get("height"), int) else None,
+                width=teil_breite,
+                height=teil_hoehe,
             )
             if not self.manager.attach_item(str(part["Id"]), str(item_id), index):
                 self.manager.delete_item(str(part["Id"]))
@@ -8035,7 +7589,7 @@ class SaveEditorGUI:
         a child at a cell that is not a slot.
         """
         root_template = str(preset.get("root") or "")
-        meta = self.game_item_meta_by_template_id.get(root_template, {})
+        wurzel_breite, wurzel_hoehe = self._size_to_record(root_template)
         footprint = self._footprint_for_template(root_template)
         reservation = self._preset_reservation(preset)
         if footprint is None or reservation is None:
@@ -8048,13 +7602,11 @@ class SaveEditorGUI:
         root = self.manager.add_inventory_item(
             parent_id=parent_id,
             template_id=root_template,
-            width=meta.get("width") if isinstance(meta.get("width"), int) else None,
-            height=meta.get("height") if isinstance(meta.get("height"), int) else None,
+            width=wurzel_breite,
+            height=wurzel_hoehe,
             position=(i, j),
         )
-        if rotated:
-            root.setdefault("AdditionalData", {}).setdefault(
-                "_data", {})["BaseComponent_rotated"] = True
+        self._write_rotation(root, rotated)
 
         # `parent` in the report is an index into the parts list, -1 for the root itself.
         ids: dict[int, str] = {-1: str(root["Id"])}
@@ -8069,15 +7621,12 @@ class SaveEditorGUI:
             if slot_index is None:
                 skipped += 1
                 continue
-            part_meta = self.game_item_meta_by_template_id.get(template_id, {})
+            teil_breite, teil_hoehe = self._size_to_record(template_id)
             created = self.manager.add_inventory_item(
                 parent_id=host_id,
                 template_id=template_id,
-                width=part_meta.get("width") if isinstance(part_meta.get("width"), int) else None,
-                height=(
-                    part_meta.get("height")
-                    if isinstance(part_meta.get("height"), int) else None
-                ),
+                width=teil_breite,
+                height=teil_hoehe,
             )
             # Already a child of its host, so this only writes the slot - and writes it the
             # way the game does, which for slot 0 means no Position at all.
@@ -8103,7 +7652,10 @@ class SaveEditorGUI:
 
         presets = self._presets_for_template(template_id)
         if not presets:
-            messagebox.showinfo(t["preset_title"], t["preset_none"], parent=self.root)
+            messagebox.showinfo(
+                t["preset_title"],
+                t["preset_none"].format(total=self._preset_counts()[0]),
+                parent=self.root)
             return
 
         preset = presets[0]
@@ -8114,6 +7666,7 @@ class SaveEditorGUI:
             preset = chosen
 
         if self._preset_outgrows_its_ceiling(preset):
+            gesamt, ueber = self._preset_counts()
             grown = self._preset_grown_size(preset)
             meta = self.game_item_meta_by_template_id.get(str(preset.get("root") or ""), {})
             if not messagebox.askyesno(
@@ -8121,7 +7674,8 @@ class SaveEditorGUI:
                     t["preset_outgrown"].format(
                         name=self._template_name_for_template_id(template_id) or template_id,
                         grown=f"{grown[0]}x{grown[1]}" if grown else "?",
-                        ceiling=f"{meta.get('max_width')}x{meta.get('max_height')}"),
+                        ceiling=f"{meta.get('max_width')}x{meta.get('max_height')}",
+                        total=gesamt, outgrown=ueber),
                     parent=self.root):
                 return
 
@@ -8141,7 +7695,7 @@ class SaveEditorGUI:
             messagebox.showwarning(t["preset_title"], t["preset_no_space"], parent=self.root)
             return
 
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         name = self._template_name_for_template_id(template_id) or template_id
         self._mark_pending_changes(
             t["status_preset"].format(name=name, parts=fitted))
@@ -8153,10 +7707,7 @@ class SaveEditorGUI:
     def _pick_preset(self, presets: list[dict]) -> dict | None:
         """Which configuration is meant, when a weapon ships more than one."""
         t = TRANSLATIONS[self.current_lang]
-        win = tk.Toplevel(self.root)
-        win.title(t["preset_title"])
-        win.configure(bg="#1e1e1e")
-        win.transient(self.root)
+        win = self._new_dialog(t["preset_title"])
 
         ttk.Label(win, text=t["preset_prompt"], wraplength=520).pack(
             anchor="w", padx=12, pady=(12, 6))
@@ -8253,10 +7804,7 @@ class SaveEditorGUI:
             messagebox.showerror(t["shop_offer_title"], t["msg_shop_no_offers"], parent=self.root)
             return
 
-        win = tk.Toplevel(self.root)
-        win.title(t["shop_offer_title"])
-        win.configure(bg="#1e1e1e")
-        win.transient(self.root)
+        win = self._new_dialog(t["shop_offer_title"])
         win.resizable(False, False)
 
         body = ttk.Frame(win, padding=12)
@@ -8293,9 +7841,9 @@ class SaveEditorGUI:
             # claims the selection, and confirming then reports no slot chosen.
             exportselection=False,
             font=("TkFixedFont", 9),
-            bg="#252526",
-            fg="#d4d4d4",
-            selectbackground="#3794ff",
+            bg=COLOR_PANEL,
+            fg=COLOR_TEXT,
+            selectbackground=COLOR_ACCENT,
             highlightthickness=0,
             yscrollcommand=slot_scroll.set,
         )
@@ -8551,6 +8099,19 @@ class SaveEditorGUI:
                 open_ids.add(members[0])
         return open_ids
 
+    def _refresh_scope_keeping_open(self) -> None:
+        """Baut die Inventarliste neu auf und laesst offen, was offen war.
+
+        Nach jeder Aenderung am Baum muss die Ansicht neu gefuellt werden, und ohne diesen
+        Handgriff klappt dabei jeder aufgeklappte Gegenstand wieder zu - wer eine Waffe
+        aufgeklappt hat, um ein Anbauteil abzunehmen, sucht sie danach von vorn.
+
+        Stand an **19 Stellen** wortgleich daneben, mal zweizeilig ueber eine Variable
+        `reopen`, mal einzeilig verschachtelt. Zwei Schreibweisen fuer denselben Handgriff
+        heissen: beim naechsten Mal schreibt jemand eine dritte, oder vergisst ihn.
+        """
+        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+
     def _on_tree_right_click(self, event: tk.Event) -> None:
         row = self.tree.identify_row(event.y)
         if not row:
@@ -8668,8 +8229,7 @@ class SaveEditorGUI:
         """
         gesehen = set()
         for item_id in members:
-            daten = (self.manager.get_item(item_id) or {}).get(
-                "AdditionalData", {}).get("_data", {}) or {}
+            daten = item_data(self.manager.get_item(item_id))
             gesehen.add(tuple(daten.get(feld) for feld in self.STAPEL_UNTERSCHIEDE))
             if len(gesehen) > 1:
                 return True
@@ -8775,8 +8335,7 @@ class SaveEditorGUI:
             self._set_status(t["status_mint_nothing"])
             return
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(t["status_mint"].format(count=cleared))
 
     def _repair_item_id(self, item_id: str) -> None:
@@ -8790,8 +8349,7 @@ class SaveEditorGUI:
             self._set_status(f"Nothing to repair on item {item_id}")
             return
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(f"Edited item {item_id} (not saved yet)")
 
     def _duplicate_members(
@@ -8851,11 +8409,7 @@ class SaveEditorGUI:
                 if not clone:
                     failures.append(item_id)
                     continue
-                inner = clone.setdefault("AdditionalData", {}).setdefault("_data", {})
-                if rotated:
-                    inner["BaseComponent_rotated"] = True
-                else:
-                    inner.pop("BaseComponent_rotated", None)
+                self._write_rotation(clone, rotated)
                 clone_id = clone.get("Id")
                 if isinstance(clone_id, str):
                     created_ids.append(clone_id)
@@ -8895,8 +8449,7 @@ class SaveEditorGUI:
             messagebox.showerror(t["title"], t["msg_duplicate_failed"].format(failed_hint=failed_hint))
             return []
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         failure_note = f", failed: {len(failures)}" if failures else ""
         mode_label = "stack items" if len(members) > 1 else "item copies"
         self._mark_pending_changes(
@@ -8960,11 +8513,13 @@ class SaveEditorGUI:
                 item = self.manager.get_item(item_id)
                 if not item:
                     continue
-                inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+                # Kein `writable_...`: geschrieben wird nur in ein Feld, das es schon
+                # gibt, und ein Gegenstand ohne Block hat keins - er bekaeme sonst einen
+                # leeren, siehe `prune_item_data`.
+                inner = item_data(item)
                 if "StackableComponent_quantity" in inner:
                     inner["StackableComponent_quantity"] = units
-            reopen = self._capture_open_member_ids()
-            self._populate_scope_view(reopen_member_ids=reopen)
+            self._refresh_scope_keeping_open()
 
     def _repair_selected_custom(self) -> None:
         members = self._selected_members()
@@ -9042,12 +8597,7 @@ class SaveEditorGUI:
             if not moved:
                 fehler.append(item_id)
                 continue
-            inner = (self.manager.get_item(item_id) or {}).setdefault(
-                "AdditionalData", {}).setdefault("_data", {})
-            if rotated:
-                inner["BaseComponent_rotated"] = True
-            else:
-                inner.pop("BaseComponent_rotated", None)
+            self._write_rotation(self.manager.get_item(item_id) or {}, rotated)
             bewegt += 1
 
         target_label = self._target_label(target)
@@ -9105,10 +8655,25 @@ class SaveEditorGUI:
 
         # Einmal neu aufbauen, nicht je Gegenstand - der Baum wird sonst bei zehn
         # Gegenstaenden zehnmal verworfen und neu gefuellt.
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(
             t["status_moved"].format(count=bewegt, target=target_label))
         return bewegt
+
+    def _write_rotation(self, item: dict, rotated: bool) -> None:
+        """Setzt oder loescht `BaseComponent_rotated`, ohne einen leeren Block zu hinterlassen.
+
+        Stand dreimal wortgleich da - beim Verschieben eines Stuecks, beim Verschieben mehrerer
+        und beim Aufteilen -, und alle drei legten den Block **vor** der Fallunterscheidung an.
+        Beim Nicht-Drehen wurde danach nur etwas herausgenommen, was gar nicht drin war: zurueck
+        blieb `{"_data": {}}`, eine Form, die das Spiel nie erzeugt und die es beim naechsten
+        Laden ins Postfach fuehrt. Siehe `prune_item_data`.
+        """
+        if rotated:
+            writable_item_data(item)["BaseComponent_rotated"] = True
+        else:
+            item_data(item).pop("BaseComponent_rotated", None)
+            prune_item_data(item)
 
     def _move_item_interactive(self, item_id: str) -> bool:
         """Asks for a destination container and moves one item there.
@@ -9167,15 +8732,11 @@ class SaveEditorGUI:
             return False
 
         item = self.manager.get_item(item_id) or {}
-        inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
-        if rotated:
-            inner["BaseComponent_rotated"] = True
-        else:
-            inner.pop("BaseComponent_rotated", None)
+        self._write_rotation(item, rotated)
 
         target_label = t["target_inbox"] if target == "inbox" else next(
             (label for cid, label in self._placement_targets() if cid == target), target)
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(
             t["status_moved"].format(count=len(moved), target=target_label))
         return True
@@ -9208,10 +8769,9 @@ class SaveEditorGUI:
         if value is None or value == quantity:
             return
 
-        inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+        inner = writable_item_data(item)
         inner["StackableComponent_quantity"] = value
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(t["status_stack_set"].format(
             name=self._template_name_for_item_id(item_id) or "?", count=value))
 
@@ -9224,10 +8784,7 @@ class SaveEditorGUI:
         t = TRANSLATIONS[self.current_lang]
         top = capacity if isinstance(capacity, int) and capacity > 0 else None
 
-        win = tk.Toplevel(self.root)
-        win.title(t["stack_title"])
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(t["stack_title"])
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
 
@@ -9323,13 +8880,9 @@ class SaveEditorGUI:
             messagebox.showerror(t["split_title"], t["move_failed"], parent=self.root)
             return
 
-        inner = clone.setdefault("AdditionalData", {}).setdefault("_data", {})
-        if rotated:
-            inner["BaseComponent_rotated"] = True
-        else:
-            inner.pop("BaseComponent_rotated", None)
+        self._write_rotation(clone, rotated)
 
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(
             t["status_split"].format(amount=amount, quantity=quantity))
 
@@ -9472,7 +9025,7 @@ class SaveEditorGUI:
         if not moved:
             messagebox.showerror(t["attach_title"], t["attach_failed"], parent=self.root)
             return False
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(
             t["status_attached"].format(part=part_name, slot=slot_label))
         return True
@@ -9484,17 +9037,14 @@ class SaveEditorGUI:
         thing that differs - a scope in the warehouse and the same scope on a rifle.
         """
         t = TRANSLATIONS[self.current_lang]
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.configure(bg="#1e1e1e")
-        win.transient(self.root)
+        win = self._new_dialog(title)
 
         ttk.Label(win, text=prompt, wraplength=520).pack(anchor="w", padx=12, pady=(12, 6))
         # exportselection=False: without it the selection is dropped the moment anything
         # else in the app takes the system selection, and curselection() comes back empty.
         box = tk.Listbox(
             win, height=min(max(len(candidates), 4), 14), width=70, exportselection=False,
-            bg="#252526", fg="#d4d4d4", selectbackground="#0e639c", activestyle="none",
+            bg=COLOR_PANEL, fg=COLOR_TEXT, selectbackground=COLOR_SELECTED, activestyle="none",
         )
         for candidate in candidates:
             name = self._template_name_for_item_id(candidate) or candidate
@@ -9542,10 +9092,7 @@ class SaveEditorGUI:
             messagebox.showinfo(t["attach_title"], t["attach_nothing"], parent=self.root)
             return
 
-        win = tk.Toplevel(self.root)
-        win.title(t["attach_title"])
-        win.configure(bg="#1e1e1e")
-        win.transient(self.root)
+        win = self._new_dialog(t["attach_title"])
 
         header = ttk.Label(
             win,
@@ -9709,9 +9256,7 @@ class SaveEditorGUI:
         """
         levels: dict[str, int] = {}
         for item in self.manager.get_all_items_flat():
-            inner = (item.get("AdditionalData") or {}).get("_data") or {}
-            if not isinstance(inner, dict):
-                continue
+            inner = item_data(item)
             foundation = str(inner.get("ShelterModuleComponent_smf") or "").strip().lower()
             if not foundation:
                 continue
@@ -9935,10 +9480,7 @@ class SaveEditorGUI:
         meta = self.game_item_meta_by_template_id.get(key) or {}
         name = self._template_name_for_template_id(key) or key or t["info_none"]
 
-        win = tk.Toplevel(self.root)
-        win.title(t["info_title"])
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(t["info_title"])
 
         body = ttk.Frame(win, padding=14)
         body.pack(fill="both", expand=True)
@@ -10163,7 +9705,7 @@ class SaveEditorGUI:
         come out as arms and legs and a visor as its helmet - which is the useful answer there
         for exactly the same reason.
 
-        Cached, because it is a full pass over 1595 catalog rows and the window reopens often.
+        Cached, because it is a full pass over ~1600 catalog rows and the window reopens often.
         """
         key = str(template_id or "").strip().lower()
         if not key:
@@ -10369,15 +9911,12 @@ class SaveEditorGUI:
         # `need` is the footprint the caller is about to place. Without it this list offers
         # containers that hold a free cell somewhere but no room for *this* item, and the
         # spawn then answers "no space" after the destination has been chosen - reported from
-        # play for a 3x2 into a tab whose 15 free cells all sat inside a growable neighbour's
-        # margin. See `_placement_targets`.
+        # play for a 3x2 into a tab whose 15 free cells all sat inside the area a growable
+        # neighbour already claims. See `_placement_targets`.
         targets.extend(self._placement_targets(need))
         targets.append(("inbox", t["target_inbox"]))
 
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(title)
         result: list[tuple[int, int | None, str] | None] = [None]
 
         body = ttk.Frame(win, padding=12)
@@ -10519,9 +10058,7 @@ class SaveEditorGUI:
         item = self.manager.get_item(item_id)
         if not item:
             return None
-        inner = (item.get("AdditionalData") or {}).get("_data", {})
-        if not isinstance(inner, dict):
-            return None
+        inner = item_data(item)
         if "DurabilityComponent_durability" in inner:
             ceiling = self._template_max_durability_for_item(item)
             if ceiling is None:
@@ -10558,10 +10095,7 @@ class SaveEditorGUI:
             else t["custom_repair_field_dur"].format(max=_trim_float(ceiling))
         )
 
-        win = tk.Toplevel(self.root)
-        win.title(t["custom_title_repair"])
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(t["custom_title_repair"])
 
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
@@ -10649,7 +10183,7 @@ class SaveEditorGUI:
             item = self.manager.get_item(item_id)
             if not item:
                 continue
-            inner = item.setdefault("AdditionalData", {}).setdefault("_data", {})
+            inner = writable_item_data(item)
             target = min(float(value), float(ceiling))
             if inner.get(field) == target:
                 continue
@@ -10663,8 +10197,7 @@ class SaveEditorGUI:
         if not changed:
             return
         t = TRANSLATIONS[self.current_lang]
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(t["status_repaired_custom"].format(count=changed))
 
     def _center_over_root(self, win: tk.Toplevel) -> None:
@@ -10786,10 +10319,7 @@ class SaveEditorGUI:
         no caller reads.
         """
         t = TRANSLATIONS[self.current_lang]
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(title)
 
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
@@ -10850,10 +10380,7 @@ class SaveEditorGUI:
             messagebox.showinfo(t["restore_title"], t["restore_none"], parent=self.root)
             return
 
-        win = tk.Toplevel(self.root)
-        win.title(t["restore_title"])
-        win.transient(self.root)
-        win.configure(bg="#1e1e1e")
+        win = self._new_dialog(t["restore_title"])
 
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
@@ -11012,8 +10539,7 @@ class SaveEditorGUI:
         if not deleted:
             return
 
-        reopen = self._capture_open_member_ids()
-        self._populate_scope_view(reopen_member_ids=reopen)
+        self._refresh_scope_keeping_open()
         self._mark_pending_changes(f"Deleted {deleted} item(s) (not saved yet)")
 
     def _search_query(self) -> str:
@@ -11026,7 +10552,7 @@ class SaveEditorGUI:
         shows everything again, and there is nothing to close. The popup this replaced
         matched ids only, so a search for a name the rows themselves display found nothing.
         """
-        self._populate_scope_view(reopen_member_ids=self._capture_open_member_ids())
+        self._refresh_scope_keeping_open()
 
     def _search_haystack(self, item_id: str) -> str:
         """Everything about one item worth searching: its name, both ids, its categories.
@@ -11160,13 +10686,12 @@ class SaveEditorGUI:
             messagebox.showerror(t["tab_mailbox"], t["msg_err_resolve_letter"])
             return
 
-        mails = self.manager.get_mail_items()
-        if idx < 0 or idx >= len(mails):
+        # Die Liste selbst anzufassen hiesse, im Save zu schneiden: `get_mail_items` gibt die
+        # echte Liste heraus, nicht eine Kopie. Genau das stand hier bis zum 10.09.2026.
+        if not self.manager.delete_mail(idx):
             messagebox.showerror(t["tab_mailbox"], t["msg_err_letter_out_of_range"])
             return
 
-        mails.pop(idx)
-        self.manager.data["MailboxDto"]["Letters"] = mails
         self._refresh_mailbox()
         self._mark_pending_changes("Deleted one mailbox letter (not saved yet)")
 
@@ -11287,17 +10812,32 @@ class SaveEditorGUI:
         }
         self._clear_pending_changes("Unsaved changes discarded")
 
+    # Every `after()` id the window keeps, so `_shutdown` can cancel all of them. A timer
+    # that outlives the root fires against destroyed widgets and dies with "invalid command
+    # name" - and until 2026-09-10 only the first of these three was cancelled, although the
+    # docstring below had named the danger since the day it was written. The other two belong
+    # to the Raw JSON tab: use its search or its copy button, close the window inside the next
+    # second and a half, and the callback fires into nothing.
+    #
+    # `test_shutdown_timers.py` compares this tuple against every `self.X = self.root.after(...)`
+    # in this file, so a fourth timer cannot be added without being listed here.
+    TIMER_ATTRIBUTES = ("_badge_after_id", "_copy_timer_id", "_json_search_timer_id")
+
     def _shutdown(self) -> None:
-        """The one way out. Cancels the badge timer before destroy() - a pending after()
+        """The one way out. Cancels every pending timer before destroy() - a pending after()
         callback outliving the root dies with "invalid command name" - and stops the
         music. One helper instead of three copies, so the close paths cannot drift; not
         in _stop_music, which also runs on mute and must not touch the animation."""
-        after_id = getattr(self, "_badge_after_id", None)
-        if after_id is not None:
+        for name in self.TIMER_ATTRIBUTES:
+            after_id = getattr(self, name, None)
+            if after_id is None:
+                continue
             try:
                 self.root.after_cancel(after_id)
             except tk.TclError:
+                # Already fired or already cancelled - nothing left to call off.
                 pass
+            setattr(self, name, None)
         self._stop_music()
         self.root.destroy()
 
@@ -11379,15 +10919,13 @@ class SaveEditorGUI:
                 import winsound
                 winsound.PlaySound(str(music_path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
                 self.music_playing = True
-                if hasattr(self, 'mute_button') and self.mute_button:
-                    self.mute_button.configure(text="🔇 Mute")
+                self._label_mute_button()
             except Exception:
                 pass
         else:
             try:
                 self.music_playing = True
-                if hasattr(self, 'mute_button') and self.mute_button:
-                    self.mute_button.configure(text="🔇 Mute")
+                self._label_mute_button()
                 
                 import threading
                 self.music_thread = threading.Thread(
@@ -11442,8 +10980,28 @@ class SaveEditorGUI:
                     pass
                 self.music_process = None
 
-        if hasattr(self, 'mute_button') and self.mute_button:
-            self.mute_button.configure(text="🔊 Music")
+        self._label_mute_button()
+
+    def _label_mute_button(self) -> None:
+        """Beschriftet den Musikknopf nach dem Zustand, in der aktuellen Sprache.
+
+        Stand an drei Stellen, und keine davon stimmte ganz:
+
+        - `_start_music` schrieb zweimal fest `"\U0001f507 Mute"`, auf Englisch, in jeder Sprache.
+        - `_stop_music` schrieb `"\U0001f50a Music"` - ein Wort, das in **keiner** der drei
+          Uebersetzungstabellen vorkommt.
+        - `_update_ui_language` nahm die richtigen Schluessel, entschied aber an
+          `self.music_muted` - einem Namen, der nirgends im ganzen Baum gesetzt wird. Der
+          Zweig war damit tot, und nach jedem Sprachwechsel stand "Stumm" da, auch wenn der
+          Ton laengst aus war.
+
+        Der Zustand heisst `self.music_playing`, und der ist die einzige Quelle hier.
+        """
+        button = getattr(self, "mute_button", None)
+        if not button:
+            return
+        t = TRANSLATIONS[self.current_lang]
+        button.configure(text=t["btn_mute"] if self.music_playing else t["btn_unmute"])
 
     def _toggle_music(self) -> None:
         if self.music_playing:

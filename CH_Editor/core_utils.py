@@ -110,9 +110,107 @@ def _items_by_id(data: Dict[str, Any]) -> Dict[str, Tuple[str, dict]]:
     return found
 
 
+def item_data(item: Any) -> Dict[str, Any]:
+    """The `AdditionalData._data` block of an item, always as a dict.
+
+    The nested block held the component fields - stack size, durability, footprint - and was
+    reached by hand at 26 sites in **three** spellings that do not agree:
+
+    * `(item.get("AdditionalData") or {}).get("_data")` - may be `None`, guarded afterwards
+    * `(item.get("AdditionalData") or {}).get("_data", {})` - looks safe and is not: the
+      default only applies when the key is **missing**. Present and `null`, it returns `None`.
+      That exact mistake was a real crash path in `repair_item_logic`, found and fixed on
+      2026-09-10 while the other six copies kept standing.
+    * `... or {}` - correct, and then still followed by an `isinstance` check that can no
+      longer fail.
+
+    One name, one behaviour: whatever is missing, `null` or of the wrong type reads as an
+    empty dict, so callers can go straight to `.get(...)`. For **writing** use
+    `writable_item_data`, which creates the block.
+    """
+    if not isinstance(item, dict):
+        return {}
+    additional = item.get("AdditionalData")
+    inner = additional.get("_data") if isinstance(additional, dict) else None
+    return inner if isinstance(inner, dict) else {}
+
+
+def writable_item_data(item: dict) -> Dict[str, Any]:
+    """The same block, created on the way if it is not there yet.
+
+    The hand-written `item.setdefault("AdditionalData", {}).setdefault("_data", {})` breaks on
+    an `AdditionalData` that is present and `null`: `setdefault` returns that `None` and the
+    second `setdefault` raises. Not seen in a real save, but the reading side has to allow for
+    it, so the writing side does too.
+    """
+    additional = item.get("AdditionalData")
+    if not isinstance(additional, dict):
+        additional = {}
+        item["AdditionalData"] = additional
+    inner = additional.get("_data")
+    if not isinstance(inner, dict):
+        inner = {}
+        additional["_data"] = inner
+    return inner
+
+
+def set_position(item: dict, i: int, j: int) -> None:
+    """Writes a grid cell the way the game writes it - **without spelling out a zero.**
+
+    The serializer drops any field holding its type's default, so `(0, 5)` is `{"J": 5}` and
+    `(0, 0)` is no `Position` key at all. Counted in a real save: 1115 items carry both axes,
+    305 only `J`, 279 only `I`, 183 no `Position` - and **0 carry a written-out zero.**
+
+    The editor used to write `{"I": int(i), "J": int(j)}` unconditionally, which put 38 such
+    zeros into a save after a batch of ordinary edits. Whether the game minds is not known;
+    what is known is that it is a shape the game never produces, and the last time the editor
+    wrote one of those - an empty `AdditionalData._data` - the game moved the item to the
+    inbox. `cell_of` reads a missing axis as zero, so nothing is lost by leaving it out.
+
+    `attach_item` already followed this rule for slot indices; this is the same rule for grid
+    cells.
+    """
+    i, j = int(i), int(j)
+    if i and j:
+        item["Position"] = {"I": i, "J": j}
+    elif i:
+        item["Position"] = {"I": i}
+    elif j:
+        item["Position"] = {"J": j}
+    else:
+        item.pop("Position", None)
+
+
+def prune_item_data(item: dict) -> None:
+    """Removes the `AdditionalData` block again when nothing is left to record.
+
+    **The game never writes an empty one.** Measured against a real save: 0 items carry
+    `{"_data": {}}`, while 690 carry no `AdditionalData` at all - an item with nothing to
+    record simply has no such key. `old/scripts_legacy/repair_backpack_items.py` was retired
+    for producing exactly this shape.
+
+    It is not cosmetic. Measured on 2026-09-10 with the game itself: move an item that has no
+    `AdditionalData`, and the empty block the editor left behind is enough for the game to
+    treat the item as damaged - it lands in the inbox on the next load, with the catch-all
+    "Item Rebalance" letter. One moved plastic part, one empty block, one item gone from its
+    tab.
+
+    Call it after **popping** a field. The writing side never needs it: something that writes
+    a value leaves the block non-empty by definition.
+    """
+    additional = item.get("AdditionalData")
+    if not isinstance(additional, dict):
+        return
+    inner = additional.get("_data")
+    if isinstance(inner, dict) and not inner:
+        additional.pop("_data", None)
+    if not additional:
+        item.pop("AdditionalData", None)
+
+
 def _item_fields(item: dict) -> Dict[str, Any]:
     """The parts of an item worth naming in a change list."""
-    inner = (item.get("AdditionalData") or {}).get("_data")
+    inner = item_data(item)
     fields = {
         "TemplateId": item.get("TemplateId"),
         "ParentId": item.get("ParentId"),
@@ -347,16 +445,63 @@ def container_cells(spec: Any) -> Optional[Set[Tuple[int, int]]]:
     return None
 
 
+def container_regions(spec: Any) -> Optional[List[Set[Tuple[int, int]]]]:
+    """The compartments a container is divided into, one cell set each.
+
+    `container_cells` melts them into a single set, and for counting free space that is the
+    right answer. For *placing* it is not: a vest is a row of separate pockets, and an item
+    may not lie across the seam between two of them. Merging them made the editor offer
+    exactly that.
+
+    Measured two ways on 2026-09-10. In the game data, **all 13 templates with a split grid**
+    offer sizes that fit no single compartment - a SeaSeal 18 of them, a CARTER 16, and a
+    CARTER is five pockets of 2x2, 2x2, 2x3, 2x2 and 2x1 that together look like one 4x5. And
+    in a real save, of the **28 items sitting in four split containers, not one crosses a
+    boundary** - so the game holds to them and only the editor did not. Confirmed from play the
+    same day: into a CARTER "da geht nur ein 2x2 item rein", and a 2x3 into the one pocket that
+    is 2x3.
+
+    A `simple` container is one compartment, so this is a one-element list and callers need no
+    special case. `None` for a shape that is not modelled, exactly like `container_cells`.
+    """
+    if not isinstance(spec, dict):
+        return None
+
+    if spec.get("kind") == "split":
+        regions: List[Set[Tuple[int, int]]] = []
+        for region in spec.get("regions") or []:
+            if not isinstance(region, dict):
+                continue
+            width, height = region.get("width"), region.get("height")
+            if not isinstance(width, int) or not isinstance(height, int):
+                continue
+            i0, j0 = int(region.get("i") or 0), int(region.get("j") or 0)
+            cells = {(i0 + di, j0 + dj)
+                     for di in range(width) for dj in range(height)}
+            if cells:
+                regions.append(cells)
+        return regions or None
+
+    cells = container_cells(spec)
+    return [cells] if cells else None
+
+
 def find_free_cell(
     cells: Optional[Set[Tuple[int, int]]],
     occupied: Any,
     width: int,
     height: int,
+    regions: Optional[List[Set[Tuple[int, int]]]] = None,
 ) -> Optional[Tuple[int, int]]:
     """The topmost, leftmost cell where a width x height item fits with nothing in the way.
 
     Scans J before I so a container fills the way its grid reads. `cells` is what the
     container offers, `occupied` anything already standing in it - a dict or set of cells.
+
+    `regions` is the container's compartments from `container_regions`. Given, an item must
+    fit inside **one** of them: the cells are all there and all free, but a vest's pockets are
+    separate and the game refuses anything laid across the seam. Left out, only `cells`
+    decides, which is right for a container that has no seams and wrong for one that does.
     """
     if not cells or width <= 0 or height <= 0:
         return None
@@ -365,12 +510,13 @@ def find_free_cell(
     max_j = max(j for _, j in cells)
     for j in range(max_j + 1):
         for i in range(max_i + 1):
-            if all(
-                (i + di, j + dj) in cells and (i + di, j + dj) not in occupied
-                for di in range(width)
-                for dj in range(height)
-            ):
-                return i, j
+            belegt = {(i + di, j + dj)
+                      for di in range(width) for dj in range(height)}
+            if not all(c in cells and c not in occupied for c in belegt):
+                continue
+            if regions is not None and not any(belegt <= r for r in regions):
+                continue
+            return i, j
     return None
 
 
@@ -379,14 +525,19 @@ def find_placement(
     occupied: Any,
     width: int,
     height: int,
+    regions: Optional[List[Set[Tuple[int, int]]]] = None,
 ) -> Optional[Tuple[int, int, bool]]:
     """(I, J, rotated) for a width x height item, turned 90 degrees only if it fits no other
-    way. Rotation swaps the two axes and is what `BaseComponent_rotated` records."""
-    cell = find_free_cell(cells, occupied, width, height)
+    way. Rotation swaps the two axes and is what `BaseComponent_rotated` records.
+
+    `regions` keeps the item inside a single compartment - see `find_free_cell`. Turning it
+    is tried against the compartments too, and that is not a detail: a CARTER's biggest pocket
+    is 2 wide and 3 tall, so a 3x2 only ever gets in by being turned."""
+    cell = find_free_cell(cells, occupied, width, height, regions)
     if cell:
         return cell[0], cell[1], False
     if width != height:
-        cell = find_free_cell(cells, occupied, height, width)
+        cell = find_free_cell(cells, occupied, height, width, regions)
         if cell:
             return cell[0], cell[1], True
     return None
@@ -411,41 +562,74 @@ class SaveDataManager:
         self._load_data()
 
     def _load_data(self) -> None:
-        with self.save_path.open("r", encoding="utf-8") as f:
-            self.data = json.load(f)
+        """Reads the save and builds the four indexes - **all of it, or none of it.**
 
-        self.item_tree = {}
-        self.item_origin = {}
-        self.section_roots = {}
-        self.children_map = {}
+        This used to assign `self.data` first and fill `item_tree`, `item_origin`,
+        `section_roots` and `children_map` afterwards. Measured on 2026-09-10 with a save
+        holding `"EquipmentDto": null`: the walk raises `AttributeError` partway, and what
+        the manager is left with is the **new** document beside **four empty indexes** - so
+        every item is gone as far as the editor is concerned, while `save()` would happily
+        write that document back out. A save with `"Items": null` does the same with
+        `TypeError`.
+
+        Building into locals and assigning at the end costs one extra reference each and
+        makes the failure clean: a reload that cannot finish leaves the manager exactly as it
+        was, and the caller gets the exception.
+
+        The malformed shapes still raise on purpose. Reading `"Items": null` as an empty list
+        would let a damaged save open quietly and be written back, and losing items in
+        silence is worse than refusing to open.
+        """
+        with self.save_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        item_tree: Dict[str, dict] = {}
+        item_origin: Dict[str, str] = {}
+        section_roots: Dict[str, str] = {}
+        children_map: Dict[str, List[str]] = {}
 
         def harvest(items: List[dict], origin: str) -> None:
             for item in items:
                 if not isinstance(item, dict) or "Id" not in item:
                     continue
                 s_id = str(item["Id"])
-                self.item_tree[s_id] = item
-                self.item_origin[s_id] = origin
+                item_tree[s_id] = item
+                item_origin[s_id] = origin
 
-        equipment = self.data.get("EquipmentDto", {})
-        harvest(equipment.get("Items", []), "EquipmentDto")
-
-        shelter = self.data.get("ShelterItemDto", {})
-        shelter_root = shelter.get("Item", {}).get("Id")
+        # Die Wurzel eines Bereichs steht neben seiner Liste, nicht darin - deshalb zwei
+        # Abfragen, die das Pfadverzeichnis unten nicht abdeckt.
+        shelter_root = data.get("ShelterItemDto", {}).get("Item", {}).get("Id")
         if shelter_root:
-            self.section_roots["ShelterItemDto"] = str(shelter_root)
-        harvest(shelter.get("Container", {}).get("Items", []), "ShelterItemDto")
-
-        inventory = self.data.get("InventoryDto", {})
-        inventory_root = inventory.get("ItemDto", {}).get("Id")
+            section_roots["ShelterItemDto"] = str(shelter_root)
+        inventory_root = data.get("InventoryDto", {}).get("ItemDto", {}).get("Id")
         if inventory_root:
-            self.section_roots["InventoryDto"] = str(inventory_root)
-        harvest(inventory.get("ItemsContainerDto", {}).get("Items", []), "InventoryDto")
+            section_roots["InventoryDto"] = str(inventory_root)
 
-        for s_id, item in self.item_tree.items():
+        # Wo die drei Gegenstandslisten im Dokument liegen, steht in `_ORIGIN_LIST_PATH` -
+        # und stand hier daneben ein zweites Mal von Hand. `diff_saves` benutzt dasselbe
+        # Verzeichnis; gingen die beiden auseinander, verglichen Laden und Vergleichen
+        # verschiedene Teile derselben Datei, ohne dass etwas es gemeldet haette.
+        #
+        # Zugegriffen wird **streng**, so wie vorher: `.get(schluessel, {})` faengt nur den
+        # fehlenden Schluessel, nicht den, der `null` heisst. Das ist der Unterschied zum
+        # toleranten Gang in `diff_saves`, und er ist gewollt - siehe der Docstring oben.
+        for origin, pfad in _ORIGIN_LIST_PATH.items():
+            knoten = data
+            for schluessel in pfad[:-1]:
+                knoten = knoten.get(schluessel, {})
+            harvest(knoten.get(pfad[-1], []), origin)
+
+        for s_id, item in item_tree.items():
             p_id = item.get("ParentId")
             if p_id:
-                self.children_map.setdefault(str(p_id), []).append(s_id)
+                children_map.setdefault(str(p_id), []).append(s_id)
+
+        # Nichts davor darf `self` beruehren - ab hier kann nichts mehr schiefgehen.
+        self.data = data
+        self.item_tree = item_tree
+        self.item_origin = item_origin
+        self.section_roots = section_roots
+        self.children_map = children_map
 
     def get_item(self, item_id: str) -> Optional[dict]:
         return self.item_tree.get(str(item_id))
@@ -453,10 +637,23 @@ class SaveDataManager:
     def get_children(self, item_id: str) -> List[str]:
         return self.children_map.get(str(item_id), [])
 
+    def get_equipment_slots(self) -> List[dict]:
+        """Die Steckplatzzeilen der Ausruestung - **die Liste selbst**, nicht eine Kopie.
+
+        Der Pfad `data["EquipmentDto"]["SlotsInfo"]` stand dreimal da: zweimal lesend mit
+        `.get(..., [])`, einmal schreibend ohne Vorgabe und mit eigener `isinstance`-Pruefung
+        davor. `_forget_equipment_slots` schreibt mit `slots[:] = ...` in die Liste zurueck,
+        deshalb die echte und keine Kopie; fehlt der Block, ist die leere Liste, die hier
+        herauskommt, ein Wegwerfobjekt - und genau das ist richtig, denn dann gibt es auch
+        nichts zu vergessen.
+        """
+        equipment = self.data.get("EquipmentDto")
+        slots = equipment.get("SlotsInfo") if isinstance(equipment, dict) else None
+        return slots if isinstance(slots, list) else []
+
     def get_backpack_id(self) -> Optional[str]:
         """Id of the backpack item, anchored via its stable equipment slot (Index 2)."""
-        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo", [])
-        slot = next((s for s in slots if s.get("Index") == 2), None)
+        slot = next((s for s in self.get_equipment_slots() if s.get("Index") == 2), None)
         return str(slot["ItemId"]) if slot and slot.get("ItemId") else None
 
     def get_character_items(self) -> List[str]:
@@ -572,8 +769,8 @@ class SaveDataManager:
             "TemplateId": str(template_id),
             "ParentId": str(parent_id),
             "IsInspected": True,
-            "Position": {"I": int(i), "J": int(j)},
         }
+        set_position(item, i, j)
 
         inner: Dict[str, Any] = {}
         if isinstance(width, int) and width > 0 and isinstance(height, int) and height > 0:
@@ -621,7 +818,7 @@ class SaveDataManager:
         if parent_id is not None:
             clone["ParentId"] = str(parent_id)
         if position is not None:
-            clone["Position"] = {"I": int(position[0]), "J": int(position[1])}
+            set_position(clone, position[0], position[1])
 
         target_parent = str(clone.get("ParentId") or "")
         origin = (
@@ -707,8 +904,8 @@ class SaveDataManager:
             item = self.item_tree.get(member)
             if not item:
                 continue
-            inner = (item.get("AdditionalData") or {}).get("_data")
-            if not isinstance(inner, dict):
+            inner = item_data(item)
+            if not inner:
                 continue
             # Every field, not `any(...)`: that short-circuits on the first hit and leaves
             # `Condition_mt` sitting behind the value it belongs to.
@@ -717,10 +914,8 @@ class SaveDataManager:
             if not removed:
                 continue
             # And nothing empty is left behind: the game writes no empty `_data` anywhere -
-            # 0 of them in a real save, while 638 of its 1901 items carry no `AdditionalData`
-            # at all. An item with nothing left to record simply has no such key.
-            if not inner:
-                item.pop("AdditionalData", None)
+            # Die Regel steht in `prune_item_data`, samt der Messung dahinter.
+            prune_item_data(item)
             changed.append(member)
         return changed
 
@@ -733,7 +928,7 @@ class SaveDataManager:
 
     def is_equipped(self, item_id: str) -> bool:
         """True if an equipment slot holds this item, so deleting it empties that slot."""
-        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo", [])
+        slots = self.get_equipment_slots()
         return any(
             isinstance(slot, dict) and str(slot.get("ItemId")) == str(item_id)
             for slot in slots
@@ -774,12 +969,7 @@ class SaveDataManager:
                 if not (isinstance(entry, dict) and str(entry.get("Id")) in gone)
             ]
 
-        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo")
-        if isinstance(slots, list):
-            slots[:] = [
-                slot for slot in slots
-                if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
-            ]
+        self._forget_equipment_slots(gone)
 
         for i in doomed:
             self.item_tree.pop(i, None)
@@ -871,7 +1061,7 @@ class SaveDataManager:
         old_parent = str(item.get("ParentId") or "")
         item["ParentId"] = target_parent
         if position is not None:
-            item["Position"] = {"I": int(position[0]), "J": int(position[1])}
+            set_position(item, position[0], position[1])
 
         siblings = self.children_map.get(old_parent)
         if siblings is not None:
@@ -880,15 +1070,45 @@ class SaveDataManager:
                 del self.children_map[old_parent]
         self.children_map.setdefault(target_parent, []).append(root)
 
+        # **Ein Kind muss in der Liste nach seinem Elternteil stehen.** Gemessen am Spiel:
+        # in einem Spielstand, den es selbst geschrieben hat, steht bei 1791 Eintraegen
+        # **kein einziger** davor. Der Editor aenderte beim Wechsel innerhalb derselben
+        # Liste nur `ParentId` und liess das Dict an seinem alten Platz - wanderte der
+        # Gegenstand in einen Reiter, der weiter hinten steht, stand er nun vor seinem
+        # Elternteil. Das Spiel legt genau solche Gegenstaende beim naechsten Laden ins
+        # Postfach; nachgewiesen am 10.09.2026 in drei Durchgaengen, bei denen jedes Mal
+        # exakt die Gegenstaende zurueckkamen, die diese Ordnung verletzten.
+        #
+        # Der ganze Teilbaum wandert ans Ende, in seiner bisherigen Reihenfolge - damit
+        # steht er hinter dem neuen Elternteil, und Eltern stehen weiter vor ihren Kindern.
+        # Dieselbe Stelle, an die auch ein neu angelegter Gegenstand kommt.
+        ids = set(moving)
+        bleibt = [e for e in target_list
+                  if not (isinstance(e, dict) and str(e.get("Id")) in ids)]
+        wandert = [e for e in target_list
+                   if isinstance(e, dict) and str(e.get("Id")) in ids]
+        target_list[:] = bleibt + wandert
+
         gone = set(moving)
-        slots = self.data.get("EquipmentDto", {}).get("SlotsInfo")
-        if isinstance(slots, list):
-            slots[:] = [
-                slot for slot in slots
-                if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
-            ]
+        self._forget_equipment_slots(gone)
 
         return moving
+
+    def _forget_equipment_slots(self, gone: set) -> None:
+        """Drops the given ids from `EquipmentDto.SlotsInfo`.
+
+        Beside the item tree the game keeps a second list of which piece of equipment sits in
+        which slot on the character. Delete an item or move it away and leave that list alone,
+        and a slot is left pointing at nothing.
+
+        Stood word for word in both `delete_item` and `move_item` - both take an item its
+        place on the character, so both need the same handgrip.
+        """
+        slots = self.get_equipment_slots()
+        slots[:] = [
+            slot for slot in slots
+            if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
+        ]
 
     def slot_occupant(self, host_id: str, slot_index: int) -> Optional[str]:
         """Which item is fitted in one of a host's attachment slots, or None while it is free.
@@ -950,9 +1170,9 @@ class SaveDataManager:
             item["Position"] = {"I": slot_index}
         else:
             item.pop("Position", None)
-        inner = (item.get("AdditionalData") or {}).get("_data")
-        if isinstance(inner, dict):
-            inner.pop("BaseComponent_rotated", None)
+        inner = item_data(item)
+        inner.pop("BaseComponent_rotated", None)
+        prune_item_data(item)
         return moved
 
     def split_stack(
@@ -976,8 +1196,8 @@ class SaveDataManager:
         if not item or not isinstance(amount, int) or amount < 1:
             return None
 
-        inner = (item.get("AdditionalData") or {}).get("_data", {})
-        quantity = inner.get("StackableComponent_quantity") if isinstance(inner, dict) else None
+        inner = item_data(item)
+        quantity = inner.get("StackableComponent_quantity")
         if not isinstance(quantity, int) or isinstance(quantity, bool):
             return None
         if amount >= quantity:
@@ -987,11 +1207,73 @@ class SaveDataManager:
         if clone is None:
             return None
 
-        clone.setdefault("AdditionalData", {}).setdefault("_data", {})[
+        writable_item_data(clone)[
             "StackableComponent_quantity"
         ] = amount
         inner["StackableComponent_quantity"] = quantity - amount
         return clone
+
+    # --- The account: nickname, level, XP, skills, counters ------------------------
+    # Twelve sites in `gui_editor.py` reached into `data["AccountDto"]` themselves, four of
+    # them `setdefault` chains three levels deep, written straight out of a widget callback.
+    # Exactly the shape the mailbox had before REF-02: the manager offered nothing for this
+    # subtree, so the interface did the surgery. It knows the subtree now.
+    #
+    # `create` is the whole difference between the two halves. Reading must not write - a
+    # freshly opened save that is only looked at has to come back byte for byte the same, and
+    # a `setdefault` on the way to a label would have added an empty `AccountDto` to a file
+    # that had none. Writing has to create, because a save may legitimately arrive without
+    # the section.
+
+    def get_account(self, create: bool = False) -> dict:
+        """The `AccountDto` block: nickname, experience, skills, counters."""
+        account = self.data.get("AccountDto")
+        if isinstance(account, dict):
+            return account
+        if not create:
+            return {}
+        account = {}
+        self.data["AccountDto"] = account
+        return account
+
+    def get_experience(self, create: bool = False) -> dict:
+        """The `ExperienceDto` block, which carries `Level` and `ExperiencePoints`."""
+        account = self.get_account(create)
+        experience = account.get("ExperienceDto")
+        if isinstance(experience, dict):
+            return experience
+        if not create:
+            return {}
+        experience = {}
+        account["ExperienceDto"] = experience
+        return experience
+
+    def get_skills(self, create: bool = False) -> List[dict]:
+        """The skill rows, **the list itself** so a caller can append a missing skill.
+
+        Not a copy, unlike `get_shops`: `_write_skill_level` and `_cheat_max_skills` add a row
+        for a skill the save has never seen. Handing them a copy would have swallowed it.
+        """
+        account = self.get_account(create)
+        skills_dto = account.get("SkillsDto")
+        if not isinstance(skills_dto, dict):
+            if not create:
+                return []
+            skills_dto = {}
+            account["SkillsDto"] = skills_dto
+        skills = skills_dto.get("Skills")
+        if isinstance(skills, list):
+            return skills
+        if not create:
+            return []
+        skills = []
+        skills_dto["Skills"] = skills
+        return skills
+
+    def get_counters(self) -> dict:
+        """The `Counters` block. Read only - nothing in the editor writes counters."""
+        counters = self.get_account().get("Counters")
+        return counters if isinstance(counters, dict) else {}
 
     # --- Trader stock -------------------------------------------------------------
     # Shop offers live in AccountShops / AccountPricelists, outside the three item lists,
@@ -1037,7 +1319,11 @@ class SaveDataManager:
 
         Id, DataId and PositionViewPriority stay untouched: they come from the shop's preset,
         and the game rebuilds the whole Commodities list on its next stock refresh - which is
-        also when this edit disappears on its own. Returns None if the slot no longer exists.
+        also when this edit disappears on its own.
+
+        Returns None if the slot no longer exists **or if `price`/`count` cannot be read as
+        whole numbers** - and in that second case nothing has been written yet, which is the
+        whole point of converting them before the first assignment.
         """
         commodity = next(
             (c for c in self.get_shop_commodities(shop_id)
@@ -1045,6 +1331,18 @@ class SaveDataManager:
             None,
         )
         if not commodity:
+            return None
+
+        # **Erst umwandeln, dann anfassen.** `int(count)` und `int(price)` standen frueher
+        # unter den Zuweisungen, und ein Wert, den sie nicht nehmen konnten, liess das Angebot
+        # halb umgebaut zurueck: neuer Gegenstand drin, alter Preis und alte Anzahl daneben,
+        # und die veraltete `ItemsContainerDto` noch dort, die der Kommentar weiter unten
+        # ausdruecklich als das nennt, was nicht stehenbleiben darf. Der Aufrufer bekam dabei
+        # auch den Rueckgabewert nicht, konnte es also nicht einmal zuruecknehmen.
+        try:
+            neue_anzahl = int(count)
+            neuer_preis = int(price)
+        except (TypeError, ValueError):
             return None
 
         original = copy.deepcopy(commodity)
@@ -1062,9 +1360,9 @@ class SaveDataManager:
             }
 
         commodity["ItemDto"] = item
-        commodity["Count"] = int(count)
+        commodity["Count"] = neue_anzahl
         commodity["Price"] = {
-            "Items": [{"ItemTemplateId": CREDITS_TEMPLATE_ID, "Count": int(price)}]
+            "Items": [{"ItemTemplateId": CREDITS_TEMPLATE_ID, "Count": neuer_preis}]
         }
         # Any attachments belonged to the item we just replaced; the container's
         # OwnerItemId would now point at an item that is no longer in the offer.
@@ -1084,7 +1382,16 @@ class SaveDataManager:
     def save(self, backup_name: Optional[str] = None) -> Optional[Path]:
         """Writes the save file, first copying the current one aside if `backup_name` is
         given. `backup_name` is a label; the stored file gets a timestamp so backups
-        accumulate instead of overwriting each other. Returns the backup path."""
+        accumulate instead of overwriting each other. Returns the backup path.
+
+        **On failure the change stays in memory, and that is deliberate.** The inventory to
+        REF-03 read the missing rollback as a defect; measured afterwards, it is the opposite.
+        Rolling `self.data` back to the file would throw away work the user did and cannot
+        get again, and the one caller that matters - `_apply_changes` in the editor - shows
+        the error and returns **before** clearing its pending-changes marker, so the window
+        keeps saying the changes are unwritten. The file on disk is never in doubt either:
+        the write goes to a sibling and swaps in with `os.replace`.
+        """
         bak_path: Optional[Path] = None
         self.last_pruned = []
         if backup_name:
@@ -1124,6 +1431,17 @@ class SaveDataManager:
         return bak_path
 
     def reload_from_disk(self) -> None:
+        """Throws away everything held in memory and reads the file again.
+
+        **Every item dict the caller is holding is stale afterwards.** The four indexes are
+        rebuilt from a freshly parsed document, so an item that was looked up before this call
+        is a dangling object: writing into it changes nothing that will ever be saved. Whoever
+        calls this re-reads what they need - `_repopulate_after_reload` in the editor is that
+        step, and it exists because three callers used to do it by hand and had already drifted.
+
+        Unsaved changes are lost, silently and by design: the caller asked for the file.
+        A failed read changes nothing at all, see `_load_data`.
+        """
         self._load_data()
 
     def get_mail_count(self) -> int:
@@ -1134,7 +1452,123 @@ class SaveDataManager:
         return 0
 
     def get_mail_items(self) -> List[dict]:
+        """The letters in the mailbox.
+
+        **This is the live list, not a copy.** Editing what comes back edits the save. That
+        is what `delete_mail` below exists for - a caller that pops from this list changes
+        the save whether it meant to or not, and nothing about the call site says so.
+        """
         mailbox = self.data.get("MailboxDto")
         if isinstance(mailbox, dict):
             return mailbox.get("Letters", [])
         return []
+
+    def delete_mail(self, index: int) -> bool:
+        """Removes one letter by its position. True when there was one there.
+
+        The mailbox is the one part of the save the editor could write but had no method for,
+        so the GUI did the surgery itself: pop from the list `get_mail_items` hands out, then
+        assign it back over `data["MailboxDto"]["Letters"]`. The assignment was already a
+        no-op - the list is the save's own - and that is exactly the shape of accident this
+        method is here to prevent.
+
+        **A negative index is refused rather than counted from the end.** `list.pop(-1)` would
+        cheerfully delete the last letter when a lookup failed and handed over -1, and losing
+        a different letter than the one that was selected is the worst outcome available here.
+        """
+        mailbox = self.data.get("MailboxDto")
+        if not isinstance(mailbox, dict):
+            return False
+        letters = mailbox.get("Letters")
+        if not isinstance(letters, list):
+            return False
+        if not isinstance(index, int) or isinstance(index, bool):
+            return False
+        if index < 0 or index >= len(letters):
+            return False
+        letters.pop(index)
+        return True
+
+
+# --- Grouping items into display rows -----------------------------------------------------
+# These three stood in `main_editor.py`, the command line front end, and `gui_editor.py`
+# imported them from there - a window pulling its logic out of a file whose other functions
+# are `print()`/`input()` loops. REF-03 called that the leak's other direction. Both front
+# ends take them from here now; nothing about them is specific to either.
+
+def build_entries(manager, item_ids):
+    """Groups item ids into display entries: items with children always stand alone,
+    childless items sharing a TemplateId are grouped into a single stack entry."""
+    entries = []
+    stacks = {}
+
+    for iid in item_ids:
+        item = manager.get_item(iid)
+        if not item:
+            continue
+        if manager.get_children(iid):
+            entries.append([iid])
+        else:
+            tid = item.get("TemplateId", "Unknown")
+            if tid not in stacks:
+                stacks[tid] = []
+                entries.append(stacks[tid])
+            stacks[tid].append(iid)
+
+    return entries
+
+def describe_entry(manager, members):
+    if len(members) > 1:
+        return f"Stack of {len(members)} units", ""
+
+    label = "Backpack" if members[0] == manager.get_backpack_id() else "Item"
+    attached = build_entries(manager, manager.get_children(members[0]))
+    note = f"({len(attached)} attached)" if attached else "(empty)"
+    return label, note
+
+def repair_item_logic(item, max_durability=None):
+    """Restores an item's condition in place. Returns whether anything changed.
+
+    Durability is a per-item ceiling (5 charges for a repair kit, 1600 for a Major
+    MedKit), so `max_durability` should come from the game data. `DurabilityComponent_md`
+    is the cap up to which repair kits work in-game and degrades over time, so it is
+    lifted to the same target - an item counts as needing work while either value sits
+    below the maximum.
+
+    Nothing is written when the values already match, so callers can tell an actual
+    repair from a no-op.
+    """
+    # Kein `writable_item_data`: geschrieben wird nur in Felder, die schon da sind, und ein
+    # Gegenstand ohne `_data` hat keins davon. Ein leeres Dict laeuft also durch beide
+    # Abfragen hindurch zu `return False`, ohne je etwas anzulegen.
+    inner_data = item_data(item)
+
+    if "DurabilityComponent_durability" in inner_data:
+        target = max_durability
+        if not isinstance(target, (int, float)) or target <= 0:
+            # No game data: fall back to the item's own ceiling rather than guessing.
+            own_max = inner_data.get("DurabilityComponent_md")
+            target = own_max if isinstance(own_max, (int, float)) and own_max > 0 else None
+        if target is None:
+            return False
+
+        target = float(target)
+        has_md = "DurabilityComponent_md" in inner_data
+        if (
+            inner_data["DurabilityComponent_durability"] == target
+            and (not has_md or inner_data["DurabilityComponent_md"] == target)
+        ):
+            return False
+
+        inner_data["DurabilityComponent_durability"] = target
+        if has_md:
+            inner_data["DurabilityComponent_md"] = target
+        return True
+
+    if "Condition_d" in inner_data:
+        if inner_data["Condition_d"] == 4.0:
+            return False
+        inner_data["Condition_d"] = 4.0
+        return True
+
+    return False

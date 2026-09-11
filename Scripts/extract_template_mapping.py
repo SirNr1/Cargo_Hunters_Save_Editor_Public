@@ -9,9 +9,13 @@ GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 # The in-game currency. Every template price and every shop price is denominated in it, so
-# reading a price means picking this template out of the price's item list. Repeated here
-# rather than imported: this script is standalone and does not depend on CH_Editor.
-CREDITS_ID = "cb567810-cc82-424f-893f-299c704ffb12"
+# reading a price means picking this template out of the price's item list.
+#
+# The same GUID stands in `CH_Editor/core_utils.py`, and now under the same name. Repeated
+# rather than imported because this script is standalone: it touches no `sys.path` and
+# imports nothing from CH_Editor, so it runs from a checkout that has only `Scripts/`.
+# Sharing the name is what makes the two copies findable as one thing.
+CREDITS_TEMPLATE_ID = "cb567810-cc82-424f-893f-299c704ffb12"
 # The game on Steam. Only used to find its appmanifest for the build id.
 STEAM_APP_ID = "4197990"
 LOG_TEMPLATE_RE = re.compile(
@@ -93,7 +97,10 @@ def collect_log_template_hints(game_path: Path) -> dict[str, Any]:
         files_scanned.append(str(log_file))
         try:
             text = log_file.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError:
+            # A log the game still holds open, one that vanished between the glob and the
+            # read, or one that will not open. The decode cannot fail - `errors="ignore"` -
+            # so nothing else belongs in here.
             continue
 
         for field_name, guid in LOG_TEMPLATE_RE.findall(text):
@@ -155,7 +162,9 @@ def collect_game_version(game_path: Path) -> dict[str, Any]:
             )
             if match:
                 version["steam_build_id"] = match.group(1)
-    except Exception:
+    except OSError:
+        # No Steam layout above the game folder, or a manifest that will not open. Same rule
+        # as the bundle version above: provenance must not fail a run that resolved names.
         pass
 
     return version
@@ -277,10 +286,17 @@ def _extract_max_size(entry: dict[str, Any]) -> tuple[int | None, int | None, bo
     """(max_width, max_height, is_resizable) from the base component.
 
     A weapon carries a `Size` **and** a `MaxSize`, plus `IsResizable`: how far it can grow as
-    attachments are added. Recorded for reference only - the editor does **not** place items
-    by it. Measured against a real save, reserving `MaxSize` invents 80 overlapping cells
-    inside five rifle cases, because a weapon there is stored at the 4x1 it really takes while
-    its maximum is 6x3. See `tests/test_placement_real.py`.
+    attachments are added.
+
+    **Reserving `MaxSize` raw is still wrong**, and that is measured: against a real save it
+    invents 80 overlapping cells inside five rifle cases, because a weapon there is stored at
+    the 4x1 it really takes while its maximum is 6x3. See `tests/test_placement_real.py`.
+
+    What the editor does with it since 2026-09-10 is narrower, and this docstring said
+    "recorded for reference only, the editor does not place items by it" for a day too long.
+    `MaxSize` is now a **ceiling** on the parts sum - a weapon cannot grow past the size it
+    would have with every slot filled - and a **floor** for a weapon this editor has just
+    spawned, whose size the game has not written yet. Never the raw answer on its own.
 
     The base component is the one carrying `LocalizedName`; other components have a `Size`
     of their own that means something else entirely.
@@ -395,22 +411,34 @@ def _extract_container(entry: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _extract_max_durability(entry: dict[str, Any]) -> float | None:
-    """Ceiling for `DurabilityComponent_durability`, e.g. 5 charges for a repair kit.
+def _first_number(entry: Any, key: str, cast):
+    """The first number under `key` anywhere in a template's tree, or None.
 
-    The save omits the value entirely while an item is untouched, so percentages are
-    only meaningful with this number from the game data.
+    A template is an object with a list of components, and no field name reliably says which
+    of them holds a given number - so it is searched for rather than looked up. The first
+    match wins and the recursion stops there.
+
+    **`True` is not a number.** In Python `bool` is a subclass of `int`, and without this
+    exception a switch sitting next to the wanted field would pass as a value: an
+    `"IsStackable": true` would read as a stack capacity of 1.
+
+    **A missing field stays missing.** Not 0: the game leaves `Mass` out entirely on templates
+    that have no weight, and "weighs nothing" and "no weight recorded" are two statements.
+
+    Stood here three times word for word - for `MaxDurability`, `StackCapacity` and `Mass` -
+    eighteen lines each, differing only in the key and the numeric type. Covered by
+    `tests/test_field_extract.py`.
     """
-    found: float | None = None
+    found = None
 
     def walk(obj: Any) -> None:
         nonlocal found
         if found is not None:
             return
         if isinstance(obj, dict):
-            value = obj.get("MaxDurability")
+            value = obj.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                found = float(value)
+                found = cast(value)
                 return
             for nested in obj.values():
                 walk(nested)
@@ -421,6 +449,15 @@ def _extract_max_durability(entry: dict[str, Any]) -> float | None:
 
     walk(entry)
     return found
+
+
+def _extract_max_durability(entry: dict[str, Any]) -> float | None:
+    """Ceiling for `DurabilityComponent_durability`, e.g. 5 charges for a repair kit.
+
+    The save omits the value entirely while an item is untouched, so percentages are
+    only meaningful with this number from the game data.
+    """
+    return _first_number(entry, "MaxDurability", float)
 
 
 def _extract_has_wear_condition(entry: dict[str, Any]) -> bool:
@@ -461,26 +498,7 @@ def _extract_stack_capacity(entry: dict[str, Any]) -> int | None:
 
     Only stackable templates carry it, so its presence doubles as the stackable flag.
     """
-    found: int | None = None
-
-    def walk(obj: Any) -> None:
-        nonlocal found
-        if found is not None:
-            return
-        if isinstance(obj, dict):
-            value = obj.get("StackCapacity")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                found = int(value)
-                return
-            for nested in obj.values():
-                walk(nested)
-            return
-        if isinstance(obj, list):
-            for nested in obj:
-                walk(nested)
-
-    walk(entry)
-    return found
+    return _first_number(entry, "StackCapacity", int)
 
 
 def _extract_price(entry: dict[str, Any]) -> int | None:
@@ -506,7 +524,7 @@ def _extract_price(entry: dict[str, Any]) -> int | None:
                 for part in price["Items"]:
                     if not isinstance(part, dict):
                         continue
-                    if normalize_guid(str(part.get("ItemTemplateId") or "")) != CREDITS_ID:
+                    if normalize_guid(str(part.get("ItemTemplateId") or "")) != CREDITS_TEMPLATE_ID:
                         continue
                     count = part.get("Count")
                     if isinstance(count, (int, float)) and not isinstance(count, bool):
@@ -530,26 +548,7 @@ def _extract_mass(entry: dict[str, Any]) -> float | None:
     the game omits the field on templates that have no weight at all, and a blueprint
     weighing zero and a blueprint with no weight recorded are different statements.
     """
-    found: float | None = None
-
-    def walk(obj: Any) -> None:
-        nonlocal found
-        if found is not None:
-            return
-        if isinstance(obj, dict):
-            value = obj.get("Mass")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                found = float(value)
-                return
-            for nested in obj.values():
-                walk(nested)
-            return
-        if isinstance(obj, list):
-            for nested in obj:
-                walk(nested)
-
-    walk(entry)
-    return found
+    return _first_number(entry, "Mass", float)
 
 
 def _clean_category_label(label: str) -> str:
@@ -903,6 +902,40 @@ def _clean_localized(
     return cleaned
 
 
+def _resolve_table_reference(
+    reference: Any,
+    locale: str,
+    tables: dict[str, dict[int, str]],
+    key_maps: dict[str, dict[str, int]],
+) -> str | None:
+    """The text behind a reference of the form `{TableReference, TableEntryReference}`.
+
+    This is how the game data points at a localized string: not the text itself, but the name
+    of a table and a number inside it. The chosen language's table is tried first, then the
+    English one - a translation that does not exist yet should give English text rather than
+    a gap.
+
+    Whatever is found then goes through `_clean_localized`: the raw text can carry further
+    references and TextMeshPro markup.
+
+    Stood word for word as a nested function in both `_extract_quests_meta` and
+    `_extract_shelter_crafting_meta`. Both close over the same three values, so this is one
+    function with three arguments instead of the same nesting twice. Covered by
+    `tests/test_field_extract.py`.
+    """
+    if not isinstance(reference, dict):
+        return None
+    table_base = reference.get("TableReference")
+    entry_id = reference.get("TableEntryReference")
+    if not isinstance(table_base, str) or not isinstance(entry_id, int):
+        return None
+    for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
+        raw = (tables.get(table_name) or {}).get(entry_id)
+        if isinstance(raw, str) and raw.strip():
+            return _clean_localized(raw, locale, tables, key_maps)
+    return None
+
+
 def _extract_quests_meta(
     repo_env: Any,
     locale: str,
@@ -918,42 +951,22 @@ def _extract_quests_meta(
     A name reference names its own table, `Quests` or `DailyQuests`, so the lookup follows
     the reference rather than guessing.
     """
-    quests_text = None
-    for obj in repo_env.objects:
-        if obj.type.name != "TextAsset":
-            continue
-        try:
-            tree = obj.read_typetree()
-        except Exception:
-            continue
-        if isinstance(tree, dict) and tree.get("m_Name") == "quests":
-            script = tree.get("m_Script")
-            if isinstance(script, str) and script.strip():
-                quests_text = script
-                break
+    quests_text = _repo_text_asset_source(repo_env, "quests")
 
     if not quests_text:
         return {}
 
     try:
         quests_json = json.loads(quests_text)
-    except Exception:
+    except ValueError:
+        # `JSONDecodeError` is a `ValueError`, and the text is a str by construction, so a
+        # malformed payload is the only thing that can arrive here.
         return {}
     if not isinstance(quests_json, list):
         return {}
 
     def resolve(reference: Any) -> str | None:
-        if not isinstance(reference, dict):
-            return None
-        table_base = reference.get("TableReference")
-        entry_id = reference.get("TableEntryReference")
-        if not isinstance(table_base, str) or not isinstance(entry_id, int):
-            return None
-        for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
-            raw = (tables.get(table_name) or {}).get(entry_id)
-            if isinstance(raw, str) and raw.strip():
-                return _clean_localized(raw, locale, tables, key_maps)
-        return None
+        return _resolve_table_reference(reference, locale, tables, key_maps)
 
     meta: dict[str, dict[str, Any]] = {}
     for quest in quests_json:
@@ -1052,8 +1065,28 @@ def _quest_rewards(quest: dict[str, Any]) -> dict[str, Any]:
     return {"xp": experience, "items": items}
 
 
-def _read_repo_text_asset(repo_env: Any, name: str) -> Any:
-    """The parsed JSON of one named TextAsset in the repository bundle, or None."""
+def _repo_text_asset_source(repo_env: Any, name: str) -> str | None:
+    """The raw text of one named TextAsset in the repository bundle, or None.
+
+    The finding stood **seven** times, the same twelve lines each - and this docstring said
+    "four times" for as long as only four of them had been folded in. Six are here now:
+    `quests`, `item_templates`, `npc_bios`, `skills`, `shop_templates` and
+    `_read_repo_text_asset` below. What differed between them was only what happened to the
+    text afterwards: sometimes parsed at once, sometimes kept and read later with its own
+    error handling. So this returns the **text** rather than the JSON; the parsing stays with
+    the caller, because that is where it differs.
+
+    The seventh, `level_progress_settings`, deliberately stands on its own - see the comment
+    at that loop.
+
+    An object whose typetree will not read is skipped rather than thrown: a bundle holds
+    thousands of them, and one with an unknown type must not end the whole extraction.
+
+    **An empty entry does not count as a hit** and the search goes on. The copies disagreed
+    about this - six kept looking, `level_progress_settings` gave up there, and that is the
+    whole reason it is still written out. It is only distinguishable when two TextAssets
+    share a name and the first one is empty; the forgiving reading is the one taken here.
+    """
     for obj in repo_env.objects:
         if obj.type.name != "TextAsset":
             continue
@@ -1064,13 +1097,22 @@ def _read_repo_text_asset(repo_env: Any, name: str) -> Any:
         if not isinstance(tree, dict) or tree.get("m_Name") != name:
             continue
         script = tree.get("m_Script")
-        if not isinstance(script, str) or not script.strip():
-            return None
-        try:
-            return json.loads(script)
-        except Exception:
-            return None
+        if isinstance(script, str) and script.strip():
+            return script
     return None
+
+
+def _read_repo_text_asset(repo_env: Any, name: str) -> Any:
+    """The parsed JSON of one named TextAsset in the repository bundle, or None."""
+    script = _repo_text_asset_source(repo_env, name)
+    if script is None:
+        return None
+    try:
+        return json.loads(script)
+    except ValueError:
+        # A TextAsset that is not JSON. `_repo_text_asset_source` guarantees a non-empty
+        # str, so a decode failure is all that is left.
+        return None
 
 
 def _recycler_foundation_id(repo_env: Any) -> str | None:
@@ -1091,6 +1133,37 @@ def _recycler_foundation_id(repo_env: Any) -> str | None:
         if isinstance(found_id, str) and found_id.strip():
             return normalize_guid(found_id)
     return None
+
+
+def _merge_recipe_entries(entries: Any) -> list[dict[str, Any]]:
+    """One entry per template, with the counts summed.
+
+    Some recipes express a quantity by **repeating the entry** rather than by setting `Count`:
+    `xyzOBSOLETE_ServoCure+` lists 9x19 four times at Count 1. Taking the list as-is produced
+    four identical rows, which turned 26 real uses of 9x19 into 92 duplicates in the UI. 20 of
+    the 1150 recipes do this; none of them are the Recycler's, so recycling is unaffected
+    either way - counted against the bundle, 975 recipes qualify under either rule.
+
+    Without a `Count` an entry counts as **one**, not zero - otherwise a recipe that states
+    its quantities purely by repetition would vanish.
+
+    Stood twice as a nested function, in `_extract_craft_meta` and in
+    `_extract_shelter_crafting_meta`, identical bar the names of the local variables. The long
+    half of this explanation was only at the first of the two.
+    """
+    merged: dict[str, int] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        template_id = entry.get("ItemTemplateId")
+        if not isinstance(template_id, str) or not template_id.strip():
+            continue
+        count = entry.get("Count")
+        key = normalize_guid(template_id)
+        merged[key] = merged.get(key, 0) + (
+            int(count) if isinstance(count, (int, float)) else 1
+        )
+    return [{"template_id": key, "count": value} for key, value in merged.items()]
 
 
 def _extract_craft_meta(repo_env: Any) -> dict[str, Any]:
@@ -1146,32 +1219,8 @@ def _extract_craft_meta(repo_env: Any) -> dict[str, Any]:
         min_level = module.get("MinLevel")
         duration = recipe.get("CraftDuration")
 
-        def parts(entries: Any) -> list[dict[str, Any]]:
-            """One entry per template, with the counts summed.
-
-            Some recipes express a quantity by **repeating the entry** rather than by setting
-            `Count`: `xyzOBSOLETE_ServoCure+` lists 9x19 four times at Count 1. Taking the
-            list as-is produced four identical rows, which turned 26 real uses of 9x19 into 92
-            duplicates in the UI. 20 of the 1150 recipes do this; none of them are the
-            Recycler's, so recycling is unaffected either way - verified by counting both
-            rules against the bundle: 975 recipes qualify under each.
-            """
-            merged: dict[str, int] = {}
-            for entry in entries if isinstance(entries, list) else []:
-                if not isinstance(entry, dict):
-                    continue
-                template_id = entry.get("ItemTemplateId")
-                if not isinstance(template_id, str) or not template_id.strip():
-                    continue
-                count = entry.get("Count")
-                key = normalize_guid(template_id)
-                merged[key] = merged.get(key, 0) + (
-                    int(count) if isinstance(count, (int, float)) else 1
-                )
-            return [{"template_id": key, "count": value} for key, value in merged.items()]
-
-        input_parts = parts(inputs)
-        output_parts = parts(outputs)
+        input_parts = _merge_recipe_entries(inputs)
+        output_parts = _merge_recipe_entries(outputs)
         if not input_parts or not output_parts:
             continue
 
@@ -1346,17 +1395,7 @@ def _extract_shelter_crafting_meta(
     recycler_id = _recycler_foundation_id(repo_env)
 
     def resolve(reference: Any) -> str | None:
-        if not isinstance(reference, dict):
-            return None
-        table_base = reference.get("TableReference")
-        entry_id = reference.get("TableEntryReference")
-        if not isinstance(table_base, str) or not isinstance(entry_id, int):
-            return None
-        for table_name in (f"{table_base}_{locale}", f"{table_base}_en"):
-            raw = (tables.get(table_name) or {}).get(entry_id)
-            if isinstance(raw, str) and raw.strip():
-                return _clean_localized(raw, locale, tables, key_maps)
-        return None
+        return _resolve_table_reference(reference, locale, tables, key_maps)
 
     modules: dict[str, dict[str, Any]] = {}
     for entry in foundations:
@@ -1396,25 +1435,8 @@ def _extract_shelter_crafting_meta(
         if target is None:
             continue
 
-        def parts(entries: Any) -> list[dict[str, Any]]:
-            """One row per template with the counts summed - 20 recipes state a quantity by
-            repeating the entry instead of setting `Count`."""
-            merged: dict[str, int] = {}
-            for item in entries if isinstance(entries, list) else []:
-                if not isinstance(item, dict):
-                    continue
-                template_id = item.get("ItemTemplateId")
-                if not isinstance(template_id, str) or not template_id.strip():
-                    continue
-                count = item.get("Count")
-                normalized = normalize_guid(template_id)
-                merged[normalized] = merged.get(normalized, 0) + (
-                    int(count) if isinstance(count, (int, float)) else 1
-                )
-            return [{"template_id": k, "count": v} for k, v in merged.items()]
-
-        inputs = parts(recipe.get("Inputs"))
-        outputs = parts(recipe.get("Outputs"))
+        inputs = _merge_recipe_entries(recipe.get("Inputs"))
+        outputs = _merge_recipe_entries(recipe.get("Outputs"))
         if not inputs or not outputs:
             continue
 
@@ -1563,20 +1585,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
     )
 
     repo_env = UnityPy.load(str(repo_bundle))
-    item_templates_text = None
-    for obj in repo_env.objects:
-        if obj.type.name != "TextAsset":
-            continue
-        try:
-            tree = obj.read_typetree()
-        except Exception:
-            continue
-        if not isinstance(tree, dict) or tree.get("m_Name") != "item_templates":
-            continue
-        script = tree.get("m_Script")
-        if isinstance(script, str) and script.strip():
-            item_templates_text = script
-            break
+    item_templates_text = _repo_text_asset_source(repo_env, "item_templates")
 
     if not item_templates_text:
         return {
@@ -1639,20 +1648,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
         except Exception:
             pass
 
-    npc_bios_text = None
-    for obj in repo_env.objects:
-        if obj.type.name != "TextAsset":
-            continue
-        try:
-            tree = obj.read_typetree()
-        except Exception:
-            continue
-        if not isinstance(tree, dict) or tree.get("m_Name") != "npc_bios":
-            continue
-        script = tree.get("m_Script")
-        if isinstance(script, str) and script.strip():
-            npc_bios_text = script
-            break
+    npc_bios_text = _repo_text_asset_source(repo_env, "npc_bios")
 
     parsed = json.loads(item_templates_text)
     if not isinstance(parsed, list):
@@ -1730,7 +1726,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
     if npc_bios_text:
         try:
             npc_bios = json.loads(npc_bios_text)
-        except Exception:
+        except ValueError:
             npc_bios = []
         if isinstance(npc_bios, list):
             for row in npc_bios:
@@ -1757,19 +1753,8 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                     npc_candidates[npc_id] = alias.strip()
 
     # Extract Skills
-    skills_text = None
-    for obj in repo_env.objects:
-        if obj.type.name == "TextAsset":
-            try:
-                tree = obj.read_typetree()
-            except Exception:
-                continue
-            if isinstance(tree, dict) and tree.get("m_Name") == "skills":
-                script = tree.get("m_Script")
-                if isinstance(script, str) and script.strip():
-                    skills_text = script
-                    break
-            
+    skills_text = _repo_text_asset_source(repo_env, "skills")
+
     skills_mapping = {}
     skills_meta = {}
     if skills_text:
@@ -1801,23 +1786,16 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                     "is_disabled": bool(skill.get("IsDisabled")),
                     "order": skill.get("Order"),
                 }
-        except Exception:
+        # Same three as the trader loop below, for the same reason and out of the same
+        # shapes: a payload that is not JSON, an entry without `.get`, and a value that is
+        # not the type the expression assumes. `skills_table.get(table_ref)` adds one more
+        # way to reach TypeError - an unhashable key.
+        except (ValueError, TypeError, AttributeError):
             pass
 
     # Extract Trader templates
-    shop_templates_text = None
-    for obj in repo_env.objects:
-        if obj.type.name == "TextAsset":
-            try:
-                tree = obj.read_typetree()
-            except Exception:
-                continue
-            if isinstance(tree, dict) and tree.get("m_Name") == "shop_templates":
-                script = tree.get("m_Script")
-                if isinstance(script, str) and script.strip():
-                    shop_templates_text = script
-                    break
-            
+    shop_templates_text = _repo_text_asset_source(repo_env, "shop_templates")
+
     trader_mapping = {}
     shops_meta = {}
     if shop_templates_text:
@@ -1844,8 +1822,8 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                         else:
                             name = "Raid Shop (Yellow Van)"
                     # Same guard as shops_meta below: one shop without an Id would otherwise
-                    # raise here and the blanket except would silently drop every trader
-                    # after it from the mapping.
+                    # raise here and the except below would silently drop every trader after
+                    # it from the mapping.
                     if isinstance(shop_id, str) and shop_id.strip():
                         trader_mapping[shop_id.strip().lower()] = name
 
@@ -1863,12 +1841,32 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
                         "balance": balance if isinstance(balance, dict) else {},
                         "order": shop.get("OrderNumber"),
                     }
-        except Exception:
+        # What the shapes read above can really throw, and nothing wider. The loop keeps
+        # everything it managed before the failure, so a narrow except costs no traders that
+        # a broad one would have saved - while an unexpected error now says so instead of
+        # taking every remaining trader with it.
+        #
+        #   ValueError     - `shop_templates` is not JSON (`JSONDecodeError` is one).
+        #   AttributeError - a list entry that is not an object, so it has no `.get`.
+        #   TypeError      - the list is not iterable at all, or a name or id is not a
+        #                    string, so `in` and `.strip()` do not apply.
+        #
+        # No KeyError: every field here is read with `.get`.
+        except (ValueError, TypeError, AttributeError):
             pass
 
     # Account progression: the level ceiling, and the coefficients the XP goal is built from.
     max_account_level = None
     level_progress = {}
+    # The one TextAsset lookup that is **not** `_repo_text_asset_source`, and the only place
+    # left where those twelve lines still stand. The helper walks past an entry whose script
+    # is empty and keeps looking; this loop gives up on the first asset of the name, whatever
+    # it holds - which is what the three `break`s below say. The two readings part company
+    # only when the bundle carries two `level_progress_settings` and the first one is empty,
+    # and there is no way to check from here whether it ever does. Folding this in would
+    # therefore either change behaviour on an input nobody can rule out, or need a flag on
+    # the helper that turns an accidental disagreement into an offered choice. Neither is
+    # worth it for the account level, so the duplication stays and is named instead.
     for obj in repo_env.objects:
         if obj.type.name != "TextAsset":
             continue
@@ -1880,7 +1878,7 @@ def collect_repository_localized_names(game_path: Path, locale: str) -> dict[str
             continue
         try:
             progress = json.loads(tree.get("m_Script") or "")
-        except Exception:
+        except ValueError:
             break
         if not isinstance(progress, dict):
             break
@@ -2026,6 +2024,109 @@ def collect_unitypy_candidates(game_path: Path) -> dict[str, Any]:
     }
 
 
+def _mapping_name_guess(
+    tid: str,
+    repo_candidates: dict[str, str],
+    repo_sources: dict[str, str],
+    unity_candidates: dict[str, dict[str, int]],
+) -> tuple[str | None, str | None, int]:
+    """The best name for one template, where it came from, and how often it was seen.
+
+    The two sources are ranked rather than merged: a name out of the repository bundle is
+    the game's own and needs no vote, so it wins outright and counts as one hit. Only when
+    there is none does the typetree sweep get a say, and there the most frequent spelling
+    wins - it is guesswork, and the count is what says how much of it.
+    """
+    name_guess = None
+    name_source = None
+    name_hits = 0
+
+    if tid in repo_candidates:
+        name_guess = repo_candidates[tid]
+        name_source = repo_sources.get(tid, "repository")
+        name_hits = 1
+    elif tid in unity_candidates and unity_candidates[tid]:
+        name_guess, name_hits = max(
+            unity_candidates[tid].items(), key=lambda kv: kv[1]
+        )
+        name_source = "UnityPy_typetree"
+    return name_guess, name_source, name_hits
+
+
+def _mapping_record(
+    tid: str,
+    name_guess: str | None,
+    name_source: str | None,
+    name_hits: int,
+    usage_count: dict[str, int],
+    usage_sections: dict[str, dict[str, int]],
+    log_data: dict[str, dict[str, int]],
+    repo_candidates: dict[str, str],
+    repo_meta: dict[str, dict[str, Any]],
+    category_label_by_id: dict[int, str],
+    subcategory_label_by_id: dict[int, str],
+) -> dict[str, Any]:
+    """One row of the mapping: everything known about a single template id.
+
+    The long parameter list is not a design, it is the closure this block already had -
+    every one of these was a local of `build_final_mapping` that the row reads. Passing
+    them keeps the body word for word what it was.
+
+    The two labels are filled in afterwards rather than inside the literal because they
+    are looked up by the ids the literal has just computed.
+    """
+    record = {
+        "template_id": tid,
+        "save_count": usage_count.get(tid, 0),
+        "save_sections": usage_sections.get(tid, {}),
+        "log_hints": log_data.get(tid, {}),
+        "name_guess": name_guess,
+        "name_guess_source": name_source,
+        "name_guess_hits": name_hits,
+        "category_id": repo_meta.get(tid, {}).get("category_id"),
+        "subcategory_id": repo_meta.get(tid, {}).get("subcategory_id"),
+        "category_label": None,
+        "subcategory_label": None,
+        "width": repo_meta.get(tid, {}).get("width"),
+        "height": repo_meta.get(tid, {}).get("height"),
+        "max_durability": repo_meta.get(tid, {}).get("max_durability"),
+        "has_wear_condition": repo_meta.get(tid, {}).get("has_wear_condition"),
+        "stack_capacity": repo_meta.get(tid, {}).get("stack_capacity"),
+        "price": repo_meta.get(tid, {}).get("price"),
+        "mass": repo_meta.get(tid, {}).get("mass"),
+        "caliber": repo_meta.get(tid, {}).get("caliber"),
+        "mod_slots": repo_meta.get(tid, {}).get("mod_slots"),
+        "tags": repo_meta.get(tid, {}).get("tags"),
+        # The storage this item provides, for placing something inside it. `width`/
+        # `height` above are the item's own footprint and a different thing entirely.
+        "container": repo_meta.get(tid, {}).get("container"),
+        # The developer's own name for the template. 55 localized names are shared by
+        # several templates - eight items all read "Bodypart Blueprint" - and the alias
+        # tells 54 of those 55 groups apart (Bp_LeftArm_02_Model_03, Bp_Head_01_Model_03).
+        "alias": repo_meta.get(tid, {}).get("alias"),
+        # A resizable item keeps the cells up to MaxSize unusable even while it is drawn
+        # at `width`/`height`, so MaxSize is what has to be reserved for it.
+        "max_width": repo_meta.get(tid, {}).get("max_width"),
+        "max_height": repo_meta.get(tid, {}).get("max_height"),
+        "is_resizable": repo_meta.get(tid, {}).get("is_resizable"),
+        "resize": repo_meta.get(tid, {}).get("resize"),
+        "confidence": (
+            "high"
+            if name_guess and tid in repo_candidates
+            else (
+                "medium"
+                if name_guess or log_data.get(tid)
+                else "low"
+            )
+        ),
+    }
+    if isinstance(record["category_id"], int):
+        record["category_label"] = category_label_by_id.get(record["category_id"])
+    if isinstance(record["subcategory_id"], int):
+        record["subcategory_label"] = subcategory_label_by_id.get(record["subcategory_id"])
+    return record
+
+
 def build_final_mapping(
     save_usage: dict[str, Any],
     log_hints: dict[str, Any],
@@ -2051,146 +2152,99 @@ def build_final_mapping(
 
     mapping = []
     for tid in all_template_ids:
-        name_guess = None
-        name_source = None
-        name_hits = 0
-
-        if tid in repo_candidates:
-            name_guess = repo_candidates[tid]
-            name_source = repo_sources.get(tid, "repository")
-            name_hits = 1
-        elif tid in unity_candidates and unity_candidates[tid]:
-            name_guess, name_hits = max(
-                unity_candidates[tid].items(), key=lambda kv: kv[1]
-            )
-            name_source = "UnityPy_typetree"
-
-        record = {
-            "template_id": tid,
-            "save_count": usage_count.get(tid, 0),
-            "save_sections": usage_sections.get(tid, {}),
-            "log_hints": log_data.get(tid, {}),
-            "name_guess": name_guess,
-            "name_guess_source": name_source,
-            "name_guess_hits": name_hits,
-            "category_id": repo_meta.get(tid, {}).get("category_id"),
-            "subcategory_id": repo_meta.get(tid, {}).get("subcategory_id"),
-            "category_label": None,
-            "subcategory_label": None,
-            "width": repo_meta.get(tid, {}).get("width"),
-            "height": repo_meta.get(tid, {}).get("height"),
-            "max_durability": repo_meta.get(tid, {}).get("max_durability"),
-            "has_wear_condition": repo_meta.get(tid, {}).get("has_wear_condition"),
-            "stack_capacity": repo_meta.get(tid, {}).get("stack_capacity"),
-            "price": repo_meta.get(tid, {}).get("price"),
-            "mass": repo_meta.get(tid, {}).get("mass"),
-            "caliber": repo_meta.get(tid, {}).get("caliber"),
-            "mod_slots": repo_meta.get(tid, {}).get("mod_slots"),
-            "tags": repo_meta.get(tid, {}).get("tags"),
-            # The storage this item provides, for placing something inside it. `width`/
-            # `height` above are the item's own footprint and a different thing entirely.
-            "container": repo_meta.get(tid, {}).get("container"),
-            # The developer's own name for the template. 55 localized names are shared by
-            # several templates - eight items all read "Bodypart Blueprint" - and the alias
-            # tells 54 of those 55 groups apart (Bp_LeftArm_02_Model_03, Bp_Head_01_Model_03).
-            "alias": repo_meta.get(tid, {}).get("alias"),
-            # A resizable item keeps the cells up to MaxSize unusable even while it is drawn
-            # at `width`/`height`, so MaxSize is what has to be reserved for it.
-            "max_width": repo_meta.get(tid, {}).get("max_width"),
-            "max_height": repo_meta.get(tid, {}).get("max_height"),
-            "is_resizable": repo_meta.get(tid, {}).get("is_resizable"),
-            "resize": repo_meta.get(tid, {}).get("resize"),
-            "confidence": (
-                "high"
-                if name_guess and tid in repo_candidates
-                else (
-                    "medium"
-                    if name_guess or log_data.get(tid)
-                    else "low"
-                )
-            ),
-        }
-        if isinstance(record["category_id"], int):
-            record["category_label"] = category_label_by_id.get(record["category_id"])
-        if isinstance(record["subcategory_id"], int):
-            record["subcategory_label"] = subcategory_label_by_id.get(record["subcategory_id"])
-        mapping.append(record)
+        name_guess, name_source, name_hits = _mapping_name_guess(
+            tid, repo_candidates, repo_sources, unity_candidates
+        )
+        mapping.append(_mapping_record(
+            tid=tid,
+            name_guess=name_guess,
+            name_source=name_source,
+            name_hits=name_hits,
+            usage_count=usage_count,
+            usage_sections=usage_sections,
+            log_data=log_data,
+            repo_candidates=repo_candidates,
+            repo_meta=repo_meta,
+            category_label_by_id=category_label_by_id,
+            subcategory_label_by_id=subcategory_label_by_id,
+        ))
 
     mapping.sort(key=lambda x: (-x["save_count"], x["template_id"]))
     return mapping
 
 
+def _catalog_row(row: dict[str, Any]) -> dict[str, Any]:
+    """One catalog entry, out of one mapping row.
+
+    The catalog is the mapping minus the extraction's own bookkeeping - `save_count`,
+    `save_sections` and `log_hints` say how a name was found, which is a question about
+    the run and not about the item. `name_guess` loses the guess in its name here,
+    because by this point it is simply the name the app shows.
+    """
+    return {
+        "template_id": row.get("template_id"),
+        "name": row.get("name_guess"),
+        "name_source": row.get("name_guess_source"),
+        "category_id": row.get("category_id"),
+        "subcategory_id": row.get("subcategory_id"),
+        "category_label": row.get("category_label"),
+        "subcategory_label": row.get("subcategory_label"),
+        "width": row.get("width"),
+        "height": row.get("height"),
+        "max_durability": row.get("max_durability"),
+        "has_wear_condition": row.get("has_wear_condition"),
+        "stack_capacity": row.get("stack_capacity"),
+        "price": row.get("price"),
+        "mass": row.get("mass"),
+        "caliber": row.get("caliber"),
+        "mod_slots": row.get("mod_slots"),
+        "tags": row.get("tags"),
+        "container": row.get("container"),
+        "alias": row.get("alias"),
+        "resize": row.get("resize"),
+        "max_width": row.get("max_width"),
+        "max_height": row.get("max_height"),
+        "is_resizable": row.get("is_resizable"),
+        "confidence": row.get("confidence"),
+    }
+
+
+def _catalog_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    """Category, then subcategory, then name - the order a catalog is read in.
+
+    An item with no category sorts last rather than first: 999999 stands in for a missing
+    id so that unresolved rows collect at the end instead of heading the list. The template
+    id is the final tiebreaker, so the file comes out the same on every run.
+    """
+    return (
+        row["category_id"] if isinstance(row.get("category_id"), int) else 999999,
+        row["subcategory_id"]
+        if isinstance(row.get("subcategory_id"), int)
+        else 999999,
+        (row.get("name") or "").lower(),
+        row.get("template_id") or "",
+    )
+
+
 def build_item_catalog(mapping: list[dict[str, Any]]) -> list[dict[str, Any]]:
     catalog = []
     for row in mapping:
-        catalog.append(
-            {
-                "template_id": row.get("template_id"),
-                "name": row.get("name_guess"),
-                "name_source": row.get("name_guess_source"),
-                "category_id": row.get("category_id"),
-                "subcategory_id": row.get("subcategory_id"),
-                "category_label": row.get("category_label"),
-                "subcategory_label": row.get("subcategory_label"),
-                "width": row.get("width"),
-                "height": row.get("height"),
-                "max_durability": row.get("max_durability"),
-                "has_wear_condition": row.get("has_wear_condition"),
-                "stack_capacity": row.get("stack_capacity"),
-                "price": row.get("price"),
-                "mass": row.get("mass"),
-                "caliber": row.get("caliber"),
-                "mod_slots": row.get("mod_slots"),
-                "tags": row.get("tags"),
-                "container": row.get("container"),
-                "alias": row.get("alias"),
-                "resize": row.get("resize"),
-                "max_width": row.get("max_width"),
-                "max_height": row.get("max_height"),
-                "is_resizable": row.get("is_resizable"),
-                "confidence": row.get("confidence"),
-            }
-        )
-    catalog.sort(
-        key=lambda row: (
-            row["category_id"] if isinstance(row.get("category_id"), int) else 999999,
-            row["subcategory_id"]
-            if isinstance(row.get("subcategory_id"), int)
-            else 999999,
-            (row.get("name") or "").lower(),
-            row.get("template_id") or "",
-        )
-    )
+        catalog.append(_catalog_row(row))
+    catalog.sort(key=_catalog_sort_key)
     return catalog
 
 
-def run_extraction(
-    game_path_str: str,
-    save_path_str: str,
-    out_dir_str: str,
-    locale: str = "en",
-) -> dict[str, Any]:
-    game_path = Path(game_path_str)
-    save_path = Path(save_path_str)
-    out_dir = Path(out_dir_str)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _require_resolved_names(
+    mapping: list[dict[str, Any]],
+    repository_names: dict[str, Any],
+    unitypy_data: dict[str, Any],
+    game_path: Path,
+) -> None:
+    """Raises unless the run resolved at least one name.
 
-    if not game_path.exists():
-        raise FileNotFoundError(f"Game path not found: {game_path}")
-    if not save_path.exists():
-        raise FileNotFoundError(f"Save path not found: {save_path}")
-
-    save_usage = collect_save_template_usage(save_path)
-    log_hints = collect_log_template_hints(game_path)
-    bundle_hints = collect_bundle_slug_hints(game_path)
-    game_version = collect_game_version(game_path)
-    repository_names = collect_repository_localized_names(game_path, locale=locale)
-    unitypy_data = collect_unitypy_candidates(game_path)
-    mapping = build_final_mapping(save_usage, log_hints, repository_names, unitypy_data)
-    item_catalog = build_item_catalog(mapping)
-
-    # A run that resolved no names at all would replace a working report with nothing but
-    # GUIDs, so bail out before any output file is touched.
+    A run that resolved no names at all would replace a working report with nothing but
+    GUIDs, so bail out before any output file is touched.
+    """
     if not any(row["name_guess"] for row in mapping):
         reason = (
             repository_names.get("reason")
@@ -2203,7 +2257,25 @@ def run_extraction(
             f"Bundles expected in: {bundles_dir_for_game(game_path)}"
         )
 
-    report = {
+
+def _build_report(
+    game_path: Path,
+    save_path: Path,
+    game_version: dict[str, Any],
+    save_usage: dict[str, Any],
+    log_hints: dict[str, Any],
+    bundle_hints: dict[str, Any],
+    repository_names: dict[str, Any],
+    unitypy_data: dict[str, Any],
+    mapping: list[dict[str, Any]],
+    item_catalog: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """The whole report, as the app reads it back.
+
+    Everything above this point collects; this is where it is named and laid out. The
+    parameters are the collectors' results in the order `run_extraction` produces them.
+    """
+    return {
         "game_path": str(game_path),
         # File name only. The report is committed, and the usual place to read a save from is
         # Steam's userdata/<id64>/4197990/remote - a full path would publish that id. Nothing
@@ -2275,12 +2347,16 @@ def run_extraction(
         "bundle_slug_hints": bundle_hints["bundle_slug_hints"],
     }
 
+
+def _write_json_report(out_dir: Path, report: dict[str, Any]) -> None:
     json_path = out_dir / "template_mapping_report.json"
     with json_path.open("w", encoding="utf-8") as f:
         # Compact on purpose: only the app reads this file, and indenting it cost 1.1 MB
         # of whitespace. The CSVs next to it are the human-readable view.
         json.dump(report, f, ensure_ascii=False)
 
+
+def _write_mapping_csv(out_dir: Path, mapping: list[dict[str, Any]]) -> None:
     csv_path = out_dir / "template_mapping.csv"
     with csv_path.open("w", encoding="utf-8") as f:
         f.write(
@@ -2295,6 +2371,8 @@ def run_extraction(
                 f"{row['template_id']},{row['save_count']},{row['confidence']},\"{name}\",{row['name_guess_source'] or ''},{row.get('category_id') if row.get('category_id') is not None else ''},\"{category_label}\",{row.get('subcategory_id') if row.get('subcategory_id') is not None else ''},\"{subcategory_label}\",\"{fields}\"\n"
             )
 
+
+def _write_catalog_csv(out_dir: Path, item_catalog: list[dict[str, Any]]) -> None:
     catalog_csv_path = out_dir / "item_catalog.csv"
     with catalog_csv_path.open("w", encoding="utf-8") as f:
         # No code reads this file - the app reads the JSON report. It exists to be opened in a
@@ -2311,6 +2389,51 @@ def run_extraction(
             f.write(
                 f"{row.get('category_id') if row.get('category_id') is not None else ''},\"{category_label}\",{row.get('subcategory_id') if row.get('subcategory_id') is not None else ''},\"{subcategory_label}\",\"{name}\",{row.get('template_id') or ''},{row.get('width') if row.get('width') is not None else ''},{row.get('height') if row.get('height') is not None else ''},{row.get('price') if row.get('price') is not None else ''},{row.get('mass') if row.get('mass') is not None else ''},{row.get('name_source') or ''},{row.get('confidence') or ''}\n"
             )
+
+
+def run_extraction(
+    game_path_str: str,
+    save_path_str: str,
+    out_dir_str: str,
+    locale: str = "en",
+) -> dict[str, Any]:
+    game_path = Path(game_path_str)
+    save_path = Path(save_path_str)
+    out_dir = Path(out_dir_str)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not game_path.exists():
+        raise FileNotFoundError(f"Game path not found: {game_path}")
+    if not save_path.exists():
+        raise FileNotFoundError(f"Save path not found: {save_path}")
+
+    save_usage = collect_save_template_usage(save_path)
+    log_hints = collect_log_template_hints(game_path)
+    bundle_hints = collect_bundle_slug_hints(game_path)
+    game_version = collect_game_version(game_path)
+    repository_names = collect_repository_localized_names(game_path, locale=locale)
+    unitypy_data = collect_unitypy_candidates(game_path)
+    mapping = build_final_mapping(save_usage, log_hints, repository_names, unitypy_data)
+    item_catalog = build_item_catalog(mapping)
+
+    _require_resolved_names(mapping, repository_names, unitypy_data, game_path)
+
+    report = _build_report(
+        game_path=game_path,
+        save_path=save_path,
+        game_version=game_version,
+        save_usage=save_usage,
+        log_hints=log_hints,
+        bundle_hints=bundle_hints,
+        repository_names=repository_names,
+        unitypy_data=unitypy_data,
+        mapping=mapping,
+        item_catalog=item_catalog,
+    )
+
+    _write_json_report(out_dir, report)
+    _write_mapping_csv(out_dir, mapping)
+    _write_catalog_csv(out_dir, item_catalog)
 
     return report
 

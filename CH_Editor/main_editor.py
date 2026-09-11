@@ -1,7 +1,12 @@
 # Cleaned Import
 import sys
 import os
-from core_utils import SaveDataManager
+from core_utils import (
+    SaveDataManager,
+    build_entries,
+    describe_entry,
+    repair_item_logic,
+)
 
 def main():
     # Robust pathing to ensure the save is found no matter where you run the script from
@@ -36,7 +41,7 @@ def main():
 
 def manage_inventory(manager):
     while True:
-        print(f"\n--- Inventory Management ---")
+        print("\n--- Inventory Management ---")
         print("1. Character Equipment (Backpack & Gear)")
         print("                (Items on your person/slots)")
         print("2. Home/Shelter Inventory (Storage)")
@@ -57,83 +62,9 @@ def manage_inventory(manager):
         else:
             print("Invalid option.")
 
-def build_entries(manager, item_ids):
-    """Groups item ids into display entries: items with children always stand alone,
-    childless items sharing a TemplateId are grouped into a single stack entry."""
-    entries = []
-    stacks = {}
-
-    for iid in item_ids:
-        item = manager.get_item(iid)
-        if not item:
-            continue
-        if manager.get_children(iid):
-            entries.append([iid])
-        else:
-            tid = item.get("TemplateId", "Unknown")
-            if tid not in stacks:
-                stacks[tid] = []
-                entries.append(stacks[tid])
-            stacks[tid].append(iid)
-
-    return entries
-
-def describe_entry(manager, members):
-    if len(members) > 1:
-        return f"Stack of {len(members)} units", ""
-
-    label = "Backpack" if members[0] == manager.get_backpack_id() else "Item"
-    attached = build_entries(manager, manager.get_children(members[0]))
-    note = f"({len(attached)} attached)" if attached else "(empty)"
-    return label, note
-
-def repair_item_logic(item, max_durability=None):
-    """Restores an item's condition in place. Returns whether anything changed.
-
-    Durability is a per-item ceiling (5 charges for a repair kit, 1600 for a Major
-    MedKit), so `max_durability` should come from the game data. `DurabilityComponent_md`
-    is the cap up to which repair kits work in-game and degrades over time, so it is
-    lifted to the same target - an item counts as needing work while either value sits
-    below the maximum.
-
-    Nothing is written when the values already match, so callers can tell an actual
-    repair from a no-op.
-    """
-    inner_data = (item.get("AdditionalData") or {}).get("_data", {})
-
-    if "DurabilityComponent_durability" in inner_data:
-        target = max_durability
-        if not isinstance(target, (int, float)) or target <= 0:
-            # No game data: fall back to the item's own ceiling rather than guessing.
-            own_max = inner_data.get("DurabilityComponent_md")
-            target = own_max if isinstance(own_max, (int, float)) and own_max > 0 else None
-        if target is None:
-            return False
-
-        target = float(target)
-        has_md = "DurabilityComponent_md" in inner_data
-        if (
-            inner_data["DurabilityComponent_durability"] == target
-            and (not has_md or inner_data["DurabilityComponent_md"] == target)
-        ):
-            return False
-
-        inner_data["DurabilityComponent_durability"] = target
-        if has_md:
-            inner_data["DurabilityComponent_md"] = target
-        return True
-
-    if "Condition_d" in inner_data:
-        if inner_data["Condition_d"] == 4.0:
-            return False
-        inner_data["Condition_d"] = 4.0
-        return True
-
-    return False
-
 def perform_item_actions(item, manager):
     while True:
-        print(f"\n--- Item Actions ---")
+        print("\n--- Item Actions ---")
         print("1. Repair Item")
         print("2. Duplicate Item")
         print("3. Back")
@@ -238,16 +169,18 @@ def browse_container(manager, title, start_ids):
 
 def manage_mailbox(manager):
     count = manager.get_mail_count()
-    print(f"\n--- Mailbox ---")
+    print("\n--- Mailbox ---")
     print(f"Items: {count}")
     mails = manager.get_mail_items()
     if mails:
         for i, m in enumerate(mails):
             print(f"{i}. ID: {m.get('Id')}")
         choice = input("\nEnter index to delete (or 'b'): ")
-        if choice.isdigit() and int(choice) < len(mails):
-            mails.pop(int(choice))
-            manager.data["MailboxDto"]["Letters"] = mails
+        # Ueber den Manager, nicht an der Liste vorbei: `get_mail_items` gibt die echte Liste
+        # des Saves heraus, ein `pop` darauf aendert es also schon, und das Zurueckschreiben
+        # danach tat nie etwas. `delete_mail` lehnt ausserdem einen Index ab, den es nicht
+        # gibt, statt `pop(-1)` den letzten Brief nehmen zu lassen.
+        if choice.isdigit() and manager.delete_mail(int(choice)):
             manager.save(backup_name="mail_delete")
             print("Success.")
     input("\nPress Enter to continue...")
