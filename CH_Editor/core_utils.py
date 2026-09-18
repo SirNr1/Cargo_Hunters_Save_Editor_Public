@@ -970,6 +970,7 @@ class SaveDataManager:
             ]
 
         self._forget_equipment_slots(gone)
+        self._forget_pending_moves(gone)
 
         for i in doomed:
             self.item_tree.pop(i, None)
@@ -1109,6 +1110,29 @@ class SaveDataManager:
             slot for slot in slots
             if not (isinstance(slot, dict) and str(slot.get("ItemId")) in gone)
         ]
+
+    def _forget_pending_moves(self, gone: set) -> None:
+        """Drops the given ids from `MoveItemsToInventoryAfterSessionIds`.
+
+        New in Steam build 25354643 (2026-09-18) and the fourth field in the save that holds a
+        live item id. The game lists there what it still has to move into the inventory after
+        a raid - first seen with a warehouse key carried out in a backpack by accident.
+        Deleting such an item and leaving the list alone would leave the game an id to move
+        that no longer exists.
+
+        **An emptied list is removed, not left as `[]`.** Saves written before the key had
+        anything to hold do not carry it at all, so an absent key is the game's own shape for
+        "nothing pending" and an empty list is one it was never seen to write.
+
+        Only `delete_item` needs this. Moving keeps the id alive, and where the game then
+        finds the item is its own business.
+        """
+        pending = self.data.get("MoveItemsToInventoryAfterSessionIds")
+        if not isinstance(pending, list):
+            return
+        pending[:] = [i for i in pending if str(i) not in gone]
+        if not pending:
+            del self.data["MoveItemsToInventoryAfterSessionIds"]
 
     def slot_occupant(self, host_id: str, slot_index: int) -> Optional[str]:
         """Which item is fitted in one of a host's attachment slots, or None while it is free.
