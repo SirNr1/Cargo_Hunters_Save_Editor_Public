@@ -50,7 +50,7 @@ STEAM_APP_ID = "4197990"
 # *names* came from is a different question, answered by `game_version` in the mapping
 # report - a user can hold a newer game than this editor was tested with, and the help text
 # below says what to do then.
-GAME_BUILD_TESTED = "0.26.38.59"
+GAME_BUILD_TESTED = "0.26.39.61"
 
 # Die beiden Preset-Zahlen des getesteten Builds. Sie standen als Prosa an acht Stellen -
 # "53" in beiden Hilfetexten und drei Sprachen, "17 der 53" ebenso - und keine davon wusste
@@ -59,8 +59,8 @@ GAME_BUILD_TESTED = "0.26.38.59"
 # Dann eine Zahl auszugeben, die es gerade nicht gibt, waere schlechter als die aus dem Build.
 PRESET_COUNT_SHIPPED = 53
 PRESET_OUTGROWN_SHIPPED = 17
-GAME_BUILD_TESTED_STEAM = "24834221"
-GAME_BUILD_TESTED_DATE = "2026-08-22"
+GAME_BUILD_TESTED_STEAM = "25409884"
+GAME_BUILD_TESTED_DATE = "2026-09-27"
 
 # "Quests and Keys", a community guide on Steam - where quest objectives and key spawns are,
 # mostly as screenshots. Linked from the Quests tab rather than imported: it is someone else's
